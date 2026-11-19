@@ -32,6 +32,22 @@ instead of deleted; category directories are never targets. Eve receives a flat 
 - Criteria: each rule holds and is reported in the summary.
 - Tests: TestPlanDedupesSharedProjectDirectory, TestPlanMissingAgentDirectorySkipsInSymlinkMode, TestPlanEveIsAFlatCopy, TestApplyEveReducesFrontmatter, TestApplyOpenClawOverlapIsSkipped, TestApplyRefusesCategoryDirectory
 
+### Eve subagents
+Eve installs are flat `<name>.md` copies with reduced frontmatter. Targets are the root
+`agent/skills` (recorded as `""`) plus each selected subagent under
+`agent/subagents/<name>/skills`; subdirectories are discovered and sorted. The interactive flow
+offers root plus subagents when `agent/subagents/` exists, `--subagent` accepts `root`/`.`/names
+without validating them, and the lock records the placement. Update re-applies it, remove deletes
+exactly those files, and list shows it. Global scope rejects Eve and its subagents.
+- Criteria: paths, sorting, prompt, lock field, update/remove/list behaviour.
+- Tests: TestEveSubagentsSorted, TestPlanEveSubagentTargets, TestE2EEveSubagents, TestE2ERestoreEveFlat
+
+### Listing during add
+`add --list` prints every discovered skill and installs nothing, ignoring `--skill` (upstream
+behaviour), and exits 0.
+- Criteria: a `--skill` filter does not narrow the listing.
+- Tests: TestAddListInstallsNothing, TestE2EListIgnoresRename
+
 ### Global placement
 With `-g`, targets resolve to each agent's global directory; universal agents share
 `~/.agents/skills`; Antigravity uses its own directory; project-only agents are dropped with one
@@ -42,5 +58,4 @@ notice; Eve fails with its documented error. Global installs never write the pro
 ## Not supported
 
 - The GitHub blob fast path and its root-skill trimming.
-- Eve subagent installs (`agent/subagents/<name>/skills`).
 - Transactional rollback of a partially applied plan.

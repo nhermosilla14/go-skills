@@ -28,6 +28,21 @@ apply for AstrBot, CodeBuddy, Continue, Eve, Jazz, PromptScript and Replit; Eve 
 - Criteria: every detector and its alternates are covered; order is preserved.
 - Tests: TestDetectionMarkers, TestDetectionAlternateBranches, TestDetectionEveRequiresPackageDependency, TestDetectPreservesRegistryOrder
 
+### Host-agent detection
+Environment markers identify the process host: Claude, Codex, OpenCode, Gemini CLI, GitHub Copilot,
+Cursor (strong signals only; a bare `CURSOR_TRACE_ID` is demoted), Antigravity, Augment, Devin,
+Replit and `AI_AGENT`. The mapping is a data table evaluated once; unmapped names fall back to normal
+detection. Detection makes `add`/`remove`/`find` non-interactive, targets the host plus the universal
+set in `add` unless `-a` is given, and permits `--json` without `-y`.
+- Criteria: one test per marker, Cursor demotion, fallback, host target set.
+- Tests: TestDetectHostMarkers, TestDetectHostCursorDemoted, TestDetectHostUnmappedFallsBack, TestAddHostTargets
+
+### Global directories
+Every command resolves an agent's global directory through the same `BaseDir` resolver, so legacy
+homes (OpenClaw `~/.clawdbot`, `~/.moltbot`) behave identically in add, list, remove and update.
+- Criteria: a legacy home is used when present.
+- Tests: TestOpenClawPrefersExistingLegacyHome, TestE2EGlobalLegacyDirs
+
 ### Selection rules
 Explicit `-a` ids bypass detection; `*` expands to all. With no `-a`: zero detected and `-y` targets
 all agents; one detected targets it plus the universal set; two or more target all detected plus the
@@ -38,5 +53,5 @@ universal set. The universal set includes hidden agents and excludes Antigravity
 
 ## Not supported
 
-- Agent-context detection (installing to the agent that launched the tool automatically).
+- Banner/logo rendering (the tool has none).
 - `/Applications` probes are not OS-gated, matching upstream.

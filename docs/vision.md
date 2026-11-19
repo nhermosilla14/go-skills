@@ -106,7 +106,7 @@ Each item is an upstream defect or ambiguity being corrected; an ADR records the
 | Global lock | Written atomically like the project lock; a corrupt lock is reported, not silently replaced. |
 | Windows | Reserved device names and case-insensitive path containment are handled safely. |
 | `use --help` | Prints `use`'s own help. |
-| Blob fast path | May be dropped in favour of clone-only if installed results are identical (decided in design). |
+| Blob fast path | Dropped in favour of clone-only; installing from GitHub requires git. |
 
 ### Dropped
 

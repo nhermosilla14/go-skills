@@ -1,55 +1,86 @@
 # management
 
-Inspecting, removing and updating installed skills, in either scope.
+Inspecting, restoring, removing and updating installed skills, in either scope.
 
 ## Behaviours
 
 ### list
 Scans the canonical directory, every existing agent project directory (including legacy and shared
-ones), and Eve subagent directories for the selected scope; a skill counts when its `SKILL.md`
-parses and is not internal. Each skill is attributed to every agent that holds it. Status comes from
-the scope's lock: `tracked` (hash matches), `modified` (differs or no hash), `untracked` (no entry),
-`missing` (entry with no directory, only without an `--agent` filter). Output is sorted by skill name
-then registry order.
-- Criteria: statuses, filters, internal gating, deterministic order; human, JSON and empty forms.
-- Tests: TestListStatusesAndMissing, TestListHashLessEntryIsModified, TestListDeduplicatesLinkedDirectories, TestListSortsSkillsAndAgentsDeterministically, TestListJSONShape, TestWriteListHuman
+ones), and Eve subagent directories for the selected scope; a skill counts when its `SKILL.md` parses
+and is not internal. Status comes from the scope's lock: `tracked` (hash matches), `modified`
+(differs or no hash), `untracked` (no entry), `missing` (entry with no directory, only without an
+`--agent` filter). Output is sorted by skill name then registry order; `list --json` carries
+`subagents` for Eve placements.
+- Criteria: statuses, filters, internal gating, deterministic order, human/JSON/empty forms.
+- Tests: TestListStatusesAndMissing, TestListHashLessEntryIsModified, TestListSortsSkillsAndAgentsDeterministically, TestListJSONShape, TestWriteListHuman
 
 ### check
 Reports local changes and available updates without writing. Git sources compare the lock commit
 with the remote head of the recorded ref; local sources are never outdated; an unreachable source is
-a failure. Exit 1 when any update, local change or failure exists; 0 when clean.
-- Criteria: all four outcomes; clean summary; exit codes.
-- Tests: TestCheckUpToDate, TestCheckReportsAnUpdate, TestCheckReportsLocalChanges, TestCheckUnreachableSourceIsAFailure, TestCheckLocalSourceIsNeverOutdated, TestE2ECheckReportsGitUpdates
+a failure. Eve placements are compared through their recorded flat files when the canonical
+directory is absent. Exit 1 when any update, local change or failure exists.
+- Criteria: all outcomes, clean summary, exit codes, Eve flat handling.
+- Tests: TestCheckUpToDate, TestCheckReportsAnUpdate, TestCheckReportsLocalChanges, TestCheckUnreachableSourceIsAFailure, TestCheckEveFlat, TestE2ECheckReportsGitUpdates
 
 ### remove
-Selects by name, sanitized name, exact lock source, `--skill '*'` or `--all` (which implies
-`--agent '*'` and `-y`). Removes from the selected agent directories; the canonical directory and
-lock entry go only when no other agent still uses the skill. `--all` and `'*'` never delete
-directories the lock does not track; an explicitly named untracked skill may be removed from disk
-but not from the lock. Symlinks are unlinked, never followed. Usage errors exit 2, no match and
-failed removals exit 1.
-- Criteria: ownership rules, copy and symlink shapes, prompts, idempotent lock writes.
-- Tests: TestRemoveKeepsCanonicalWhileAnotherAgentLinksIt, TestRemoveAllKeepsUntrackedDirectories, TestRemoveAgentWildcardRemovesEveryCopy, TestRemoveSymlinkTargetSurvives, TestRemoveNoMatch, TestE2ERemoveOwnership
+Selects by name, sanitized name, exact lock source, `--skill '*'` or `--all`. Removes from the
+selected agent directories; the canonical directory and lock entry go only when no other agent uses
+the skill. `--all`/`'*'` never delete untracked directories; an explicitly named untracked skill may
+be removed from disk but not from the lock. Symlinks are unlinked, never followed. A named removal
+that would delete an unmanaged directory inside a non-dot agent directory (OpenClaw `skills/`,
+AstrBot `data/skills`, Eve `agent/skills`) is refused with exit 1. Eve subagent files are removed
+exactly as recorded.
+- Criteria: ownership rules, copy/symlink shapes, prompts, guard, idempotent lock writes.
+- Tests: TestRemoveKeepsCanonicalWhileAnotherAgentLinksIt, TestRemoveAllKeepsUntrackedDirectories, TestRemoveAgentWildcardRemovesEveryCopy, TestRemoveSymlinkTargetSurvives, TestRemoveNoMatch, TestE2ERemoveOwnership, TestE2ERemoveUnmanagedGuard
 
 ### update
-Groups lock entries by fetch URL and ref, acquires each group once, and reinstalls a skill when its
-content changed, its folder is missing, or its path moved. Install mode and renamed names are
-preserved; relocation with several candidates is skipped rather than guessed; the lock records the
-new hash, commit and path atomically. Local entries are reported as not automatically updatable.
-Unreachable sources count as failures and do not stop other groups. Exit 1 on any failure.
-- Criteria: unchanged, changed, missing, moved, renamed, copy-mode, failure and filter cases.
+Groups lock entries by fetch URL and ref, acquires each group once, and reinstalls when content
+changed, the folder is missing or the path moved. Install mode, renamed names and Eve subagent
+placements are preserved; ambiguous relocation is skipped; the lock records the new hash, commit and
+path atomically. Local entries are reported as not automatically updatable. Unreachable sources count
+as failures.
+- Criteria: unchanged, changed, missing, moved, renamed, copy-mode, Eve, failure and filter cases.
 - Tests: TestUpdateUnchangedSkillIsCurrent, TestUpdateReinstallsChangedContent, TestUpdateFollowsARelocatedSkill, TestUpdateKeepsARenamedSkill, TestUpdatePreservesCopyMode, TestUpdateUnreachableSourceIsAFailure, TestE2EUpdateRoundTrip
 
-### Both scopes
+### update scope
+Names with no `-g`/`-p` run the global phase then the project phase, each with its own header;
+`-g`/`-p` select one phase; `-g -p` runs both; on a TTY with no names the picker offers `Project`,
+`Global` and `Both`; `-y`/non-TTY chooses project when the project has skills, else global. Failures
+are counted per phase and exit 1 if either failed.
+- Criteria: both order and headers, picker, fallbacks, per-phase failures.
+- Tests: TestUpdateScopeSelection, TestE2EUpdateBothScopes, TestE2EUpdateScopeAndNames
+
+### restore
+`install`/`i` without a source (and `experimental_install`) rebuild the project from
+`skills-lock.json`: entries are grouped by source and recorded commit, fetched at that commit, and
+installed with the recorded mode and Eve placement. Entries whose content matches `computedHash` are
+kept and only missing links are repaired. `--force` reinstalls; `--dry-run` reports without writing.
+Agent targets follow `-a`, then the global `lastSelectedAgents`, then detection, then canonical only.
+Restore never prompts and never touches the global lock.
+- Criteria: pinned restore, skip/relink, copy mode, renamed skills, Eve flat files, source isolation.
+- Tests: TestRestoreGroupsBySourceAndCommit, TestRestoreSkipsMatchingContent, TestRestoreForces, TestRestoreAgentFallback, TestE2ERestoreFromLock, TestE2ERestoreEveFlat
+
+### frozen lock file
+`--frozen-lockfile` (default when any of `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
+`CIRCLECI`, `TRAVIS`, `TF_BUILD`, `JENKINS_URL` is set) validates before installing and writes
+nothing on failure: missing/empty lock, entry without a hash, content mismatch, missing folder, a
+skill the source no longer provides, or a migrated v1 entry with an empty hash. `--no-frozen-lockfile`
+overrides the CI default; `--frozen-lockfile` always wins. Non-frozen restore repairs empty hashes and
+records them.
+- Criteria: each failure case, nothing written, v1 message, overrides, dry-run validation.
+- Tests: TestFrozenCIDetection, TestFrozenRefusesDrift, TestFrozenV1EmptyHash, TestE2ERestoreFrozen
+
+### Global scope
 `-g` uses the global directories and `.skill-lock.json`; project scope uses the project lock. The
-locks never mix. Global statuses compare the recorded content hash, or clone the recorded commit
-when a 40-hex tree hash is stored. Global installs keep `installedAt` and refresh `updatedAt`.
-- Criteria: global round trip; no cross-writing; empty lock after the last removal.
+locks never mix. Global statuses compare the recorded content hash, or clone the recorded commit for a
+40-hex tree hash. Global installs keep `installedAt` and refresh `updatedAt`; `lastSelectedAgents` is
+written for both scopes.
+- Criteria: global round trip, no cross-writing, empty lock after the last removal.
 - Tests: TestE2EGlobalScopeRoundTrip, TestGlobalListAndCheckReadTheGlobalScope, TestGlobalAddWritesOnlyTheGlobalLock, TestGlobalRemoveDeletesUniversalAgentOwnDir
 
 ## Not supported
 
-- `update` across both scopes in one invocation; it runs one scope per run.
+- Global restore (upstream restore is project-only).
 - Prompted deletion of skills that disappeared upstream.
-- Repairing agent links deleted by hand.
 - Updating download, well-known and `node_modules` entries.
+- Rebuilding an installation from a lock with `node_modules` entries.

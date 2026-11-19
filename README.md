@@ -82,6 +82,13 @@ Current, working subset:
 
 # Hand one skill to an agent without installing it.
 ./skills use vercel-labs/agent-skills@web-design-guidelines | claude
+
+# Restore exactly what the lock records (frozen by default in CI).
+CI=1 skills install
+
+# Search the directory, or scaffold a new skill.
+./skills find react --owner vercel
+./skills init my-skill
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -98,11 +105,11 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial |
-| `list` | List installed skills and compare them with the lock file. | Project and global |
-| `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Project and global |
-| `update` | Re-resolve tracked skills to newer revisions, preserving mode and rename. | Project and global |
-| `check` | Report whether tracked skills are outdated without changing anything. | Project and global |
+| `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial (git sources) |
+| `list` | List installed skills and compare them with the lock file. | Delivered |
+| `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Delivered |
+| `update` | Re-resolve tracked skills to newer revisions, preserving mode, rename and Eve placement. | Delivered |
+| `check` | Report whether tracked skills are outdated without changing anything. | Delivered |
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | Delivered |
 | `find` | Search the skills.sh directory by keyword or interactively. | Delivered |
 | `init` | Create a new `SKILL.md` skeleton. | Delivered |
@@ -119,7 +126,9 @@ There is no telemetry and there will not be any.
 Data compatibility: `skills-lock.json` (v2, with v1 migration), the global
 `$XDG_STATE_HOME/skills/.skill-lock.json` (v3) and the content hash algorithm keep validating
 existing upstream lock files. Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub API limits when the
-global lock records folder tree hashes. Where upstream documentation and upstream code disagree,
+global lock records folder tree hashes; `SKILLS_API_URL` overrides the search endpoint;
+`--frozen-lockfile` is implied by the usual CI variables (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`,
+`BUILDKITE`, `CIRCLECI`, `TRAVIS`, `TF_BUILD`, `JENKINS_URL`). Where upstream documentation and upstream code disagree,
 the documented behavior wins.
 
 ## Supported platforms

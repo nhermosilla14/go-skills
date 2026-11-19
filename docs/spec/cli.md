@@ -5,53 +5,96 @@ Command surface, argument parsing, prompts, output streams, JSON documents and e
 ## Behaviours
 
 ### Commands and aliases
-`skills` dispatches `add` (`a`, `install`, `i` with a source), `list` (`ls`), `remove` (`rm`, `r`),
-`update` (`upgrade`), `check`, `help`, `version`. `install`/`i` without a source is rejected until
-restore exists. Unknown commands and flags exit 2 naming the argument.
-- Criteria: every documented alias resolves; `--help`, `<cmd> --help`, `--version` work; unknown
-  input exits 2.
-- Tests: TestParseCommands, TestHelpListsAgentsAndOnlyWorkingFlags, TestParseAddOptions
+`skills` dispatches `add` (`a`, `install`, `i` with a source), `list` (`ls`), `check`,
+`update` (`upgrade`), `remove` (`rm`, `r`), `use`, `find` (`f`, `s`, `search`), `init`,
+`install`/`i` without a source, `experimental_install` (alias of restore), `help` and `version`.
+Unknown commands and flags exit 2 naming the argument.
+- Criteria: every documented alias resolves; each command's own `--help` works (including `use`);
+  `--version` prints version, commit and build date.
+- Tests: TestParseCommands, TestParseCommands, TestParseUse, TestParseInit, TestParseFind, TestHelpListsAgentsAndOnlyWorkingFlags
 
 ### Argument parsing
 Repeatable list options are greedy in the space form and take one value in `--flag=value`; `--`
-terminates options; dash-leading values are rejected; `*` is a literal that expands per option.
-- Criteria: `--agent a b` collects two agents; `--agent=a` one; `--agent -y` errors.
+terminates options; dash-leading values are rejected; `*` is a literal expanded per option; more than
+one positional source is rejected.
+- Criteria: `--agent a b` collects two agents; `--agent=a` one; `--agent -y` errors; two sources
+  error.
 - Tests: TestParseAddOptions, TestParseUsageErrors, TestParseListAndCheck, TestParseRemoveOptions, TestParseUpdateOptions
 
 ### Interactive flow
-When stdin is a terminal and no `-y`/`--json`, `add` asks, in order: skills (when more than one and
-none selected), Eve confirmation, agents, scope, method, confirmation. The matrix is a pure
-function; `--skill`, `--agent`, `-g`, `--copy`, `--list` and `-y` each remove their prompt. The
-selector shows grouped skills with descriptions and a detail pane, and agents with a locked
-universal section.
-- Criteria: the documented matrix holds; cancel at any step installs nothing and prints
-  `Installation cancelled`; TTY cancel exits 0, non-TTY exits 1; `NO_COLOR` and `TERM=dumb` disable
-  the TUI; narrow terminals degrade without panics.
-- Tests: TestPlanStepsMatchesThePromptMatrix, TestFlowCancelAtEveryStep, TestGoldenViews, TestSessionCancelReturnsErrCancelled
+When stdin is a terminal and no `-y`/`--json`, `add` asks, in order: skills, Eve confirmation,
+Eve subagents, agents, scope, method, confirmation. Each flag that supplies an answer removes its
+prompt. The selector shows grouped skills with descriptions and a detail pane; agents show a locked
+universal section; Eve subagents show root plus one entry per subdirectory.
+- Criteria: the matrix holds; cancel at any step installs nothing and prints `Installation
+  cancelled`; TTY cancel exits 0, non-TTY exits 1; `NO_COLOR` and `TERM=dumb` disable the TUI.
+- Tests: TestPlanStepsMatchesThePromptMatrix, TestFlowCancelAtEveryStep, TestGoldenViews, TestSessionCancelReturnsErrCancelled, TestE2EEveSubagentPrompt
+
+### Host-agent detection
+Environment markers identify the agent running the tool (Claude, Codex, OpenCode, Gemini CLI,
+GitHub Copilot, Cursor with its strong signals only, Antigravity, Augment, Devin, Replit and the
+generic `AI_AGENT`). In host mode `add` becomes non-interactive, targets the mapped agent plus the
+universal set unless `-a` is given, prints one informational line, and allows `--json` without `-y`;
+`remove` and `find` also run non-interactively. Unmapped hosts fall back to ordinary detection.
+- Criteria: one test per marker row; a bare `CURSOR_TRACE_ID` does not trigger host mode; `--agent`
+  always wins.
+- Tests: TestDetectHostMarkers, TestDetectHostCursorDemoted, TestDetectHostUnmappedFallsBack, TestAddHostTargets, TestE2EHostAgentDetection
 
 ### Streams
-stdout carries only product output: the `--json` document, `list` output, `use` prompts, help and
-version. Human progress, warnings, prompts and summaries go to stderr.
-- Criteria: `--json` writes exactly one array on stdout and every human line on stderr; `list`
-  writes its table on stdout.
-- Tests: TestE2EStreamSeparation, TestE2EJSONContract
+stdout carries only product output: the `--json` document, `list` output, the `use` prompt, `find`
+results, help and version. Human progress, warnings, prompts, summaries and `init` messages go to
+stderr.
+- Criteria: `--json` writes exactly one array on stdout; `use` writes only the prompt; errors leave
+  stdout empty.
+- Tests: TestE2EStreamSeparation, TestE2EJSONContract, TestE2EUsePrompt
 
 ### JSON for add
-`--json` requires `-y` or `--all` and is incompatible with `--list`; one array is written on every
-exit path, including usage errors. Entries carry `name`, `status`, `source`, `ref`, `hash`, `path`,
-`scope`, `agents`, `mode`, plus `reason` or `error`. Exit 1 when an entry failed or was skipped.
-- Criteria: invalid input still yields valid JSON; no `security` or `fallback` fields.
-- Tests: TestE2EJSONContract, TestAddJSONNeverStartsTheFlow
+`--json` requires `-y`/`--all` unless running inside a host agent; incompatible with `--list`; one
+array is written on every exit path. Entries carry `name`, `status`, `source`, `ref`, `hash`,
+`path`, `scope`, `agents`, `mode`, plus `reason` or `error`. Exit 1 when an entry failed or was
+skipped.
+- Criteria: usage errors still yield valid JSON; host mode works without `-y`; no telemetry fields.
+- Tests: TestE2EJSONContract, TestAddJSONNeverStartsTheFlow, TestE2EHostAgentDetection
+
+### use
+`use <source>[@skill] [--skill] [--full-depth] [--agent claude-code|codex|sarvam-code]` selects one
+skill, materializes it into a `skills-use-*` directory that is kept, and prints the documented prompt
+with no other stdout. With `--agent` it launches the agent with the prompt as one argv element,
+inherits stdio and propagates its exit code.
+- Criteria: prompt bytes match the golden; ambiguity and conflicts exit 1; `--skill` twice and `*`
+  agents are rejected; a missing command reports `Could not launch`.
+- Tests: TestUsePromptGolden, TestUseSelection, TestLaunchAgent, TestE2EUsePrompt, TestE2EUseSelection, TestE2EUseAgentLaunch
+
+### init
+`init [name]` writes the documented `SKILL.md` template (YAML-escaped name) to `./SKILL.md` or
+`./<name>/SKILL.md`, refuses to overwrite (message, exit 0) and rejects names that escape the working
+directory, absolute paths and extra positionals (exit 2).
+- Criteria: template matches the golden; traversal rejected; generated file parses.
+- Tests: TestInitTemplate, TestInitUnsafeNames, TestWriteInit, TestE2EInit
+
+### find
+`find [query...] [--owner]` searches the skills.sh endpoint (`SKILLS_API_URL` override), with the
+documented partial-match fan-out, install-command rendering and badges. No query on a TTY runs an
+interactive search; without a TTY it prints the tip. Network/API failures exit 1.
+- Criteria: owner validation, exactly encoded query, fan-out caps, no-results message, interactive
+  cancel.
+- Tests: TestSearchExact, TestSearchFanout, TestFindRendering, TestRunSearch, TestE2EFindKeyword, TestE2EFindAPIFailure
+
+### One-time find-skills offer
+After a successful interactive install, when `dismissed.findSkillsPrompt` is not set, the tool offers
+to install `find-skills` globally; declining prints the manual command and either answer records the
+dismissal. It never runs non-interactively.
+- Criteria: asked once; dismissal persisted atomically; failures do not fail the original install.
+- Tests: TestOfferDismissal, TestE2EFindSkillsOfferOnce
 
 ### Exit codes
 0 success; 1 failure, partial failure, no match, or a skipped entry in `--json`; 2 usage error,
-including unsupported scope or command.
+unsupported scope or unknown option.
 - Criteria: every command documents and honours the table.
 - Tests: TestParseUsageErrors, TestE2ENoTTYPromptError, TestRemoveNoMatch
 
 ## Not supported
 
-- `use`, `find`, `init`, `install` restore and the `experimental_*` commands (later branches).
-- `update` across project and global scope in one run; the picker offers one scope.
+- `experimental_sync` and the `package.json` `skills` field (later branch).
 - Telemetry, security-audit output and `--metadata`.
-- `--subagent` is parsed but Eve subagent installs are not implemented.
+- Banner/logo output: the tool prints no decorative banner at all.

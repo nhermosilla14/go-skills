@@ -6,12 +6,13 @@ The two lock files and the content-hash contracts they record.
 
 ### Project lock
 `skills-lock.json` at the project root, `version: 2`, `skills` keyed by installed name, entries with
-`source`, `sourceType`, optional `sourceUrl`/`ref`/`commit`/`skillPath`/`skillName`/`installMode`
-and `computedHash`. There are no timestamps and no `skillPath` for local sources. Writes are atomic
+`source`, `sourceType`, optional `sourceUrl`/`ref`/`commit`/`skillPath`/`skillName`/`installMode`/
+`subagents` and `computedHash`; `subagents` records Eve placement (`""` for the root). There are no timestamps and no `skillPath` for local sources. Writes are atomic
 (temp file, fsync, rename), two-space indented, trailing newline, keys sorted by UTF-16 code units.
 Unknown top-level and per-entry fields are preserved.
-- Criteria: upstream fixtures round-trip; no timestamps; atomic replaces; unknown fields survive.
-- Tests: TestSaveWritesSortedIndentedDocument, TestLoadPreservesUnknownFieldsOnRewrite, TestProjectLockHasNoTimestamps, TestLoadRejectsOtherVersionsAndBrokenFiles
+- Criteria: upstream fixtures round-trip; no timestamps; atomic replaces; unknown fields survive;
+  `subagents` round-trips.
+- Tests: TestSaveWritesSortedIndentedDocument, TestLoadPreservesUnknownFieldsOnRewrite, TestProjectLockHasNoTimestamps, TestLoadRejectsOtherVersionsAndBrokenFiles, TestSubagentsRoundTrip
 
 ### Global lock
 `.skill-lock.json` under `$XDG_STATE_HOME/skills/` or `~/.agents/`, `version: 3`, with `skills`,
@@ -41,6 +42,5 @@ produces the v2 hash, otherwise `computedHash: ""`, which reports as modified an
 
 ## Not supported
 
-- `--frozen-lockfile` and restore: no command consumes the hashes to refuse drift yet.
 - Byte-identical output with the Node CLI; semantic compatibility is the contract.
 - Locale-exact `localeCompare` ordering for non-ASCII v1 entries (they take the empty-hash path).

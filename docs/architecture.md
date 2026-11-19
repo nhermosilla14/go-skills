@@ -35,7 +35,7 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 |---|---|---|
 | `cmd/skills` | Entry point: dispatch, user-facing errors, exit codes, build metadata. | delivered |
 | `internal/cli` | Argument parser, help, JSON document, human rendering; `internal/cli/tui` holds the Bubble Tea flow. | delivered |
-| `internal/app` | Use cases (`Add`, `List`, `Check`, `Remove`, `Update`) for both scopes, prompt questions and the `Prompter` seam; no command syntax. | delivered |
+| `internal/app` | Use cases (`Add`, `Restore`, `List`, `Check`, `Remove`, `Update`, `Use`, `Init`, `Find` support), prompts and the `Prompter` seam; no command syntax. | delivered |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
 | `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
 | `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |
@@ -43,6 +43,7 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
 | `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
 | `internal/source` | Source grammar, git acquisition and remote ref lookup, authentication ladder, temporary workspaces. | delivered |
+| `internal/search` | skills.sh search client, defensive parsing, partial-match fan-out. | delivered |
 | `e2e/` | Built-binary tests with their fixtures. | partial |
 
 Build and release: GoReleaser cross-compiles the eight targets from one commit with version
@@ -50,7 +51,8 @@ metadata injected through `-ldflags`; CI runs tests on Linux, macOS and Windows,
 cross-compiles every target. The Taskfile wraps the same commands.
 
 The clock seam is `app.Env.Now`, the process seam is `source.Runner` (git/`gh` execution), and the
-prompt seam is `app.Prompter` (real TUI, scripted answers for tests, no-prompt refusal). The
+prompt seam is `app.Prompter` (real TUI, scripted answers for tests, no-prompt refusal), and the
+host-agent seam is `agents.DetectHost` over the injected environment. The
 filesystem is real (temporary directories) rather than virtual. `cmd/skills` wires the production
 implementations and owns the process streams.
 
