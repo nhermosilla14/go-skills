@@ -165,7 +165,7 @@ func TestDiscoverRootSkillShadowsEverything(t *testing.T) {
 	}
 }
 
-func TestDiscoverMalformedRootShadowsEverything(t *testing.T) {
+func TestDiscoverMalformedRootKeepsScanning(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "SKILL.md", "---\ndescription: no name\n---\n")
 	writeFile(t, root, "skills/flat/SKILL.md", skillMD("flat-skill"))
@@ -174,8 +174,11 @@ func TestDiscoverMalformedRootShadowsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(res.Skills) != 0 {
-		t.Errorf("skills = %v, want none: a malformed root SKILL.md shadows the tree", names(res.Skills))
+	if got := names(res.Skills); !reflect.DeepEqual(got, []string{"flat-skill"}) {
+		t.Errorf("skills = %v, want flat-skill: a malformed root SKILL.md does not shadow the tree", got)
+	}
+	if len(res.Warnings) != 1 {
+		t.Errorf("warnings = %v, want one for the malformed root skill", res.Warnings)
 	}
 }
 

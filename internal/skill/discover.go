@@ -57,10 +57,11 @@ func Discover(root string, opts Options) (Result, error) {
 	}
 	d := &discoverer{root: root, opts: opts, names: map[string]bool{}}
 	if hasSkillFile(root) {
-		// The root SKILL.md shadows everything below it, even when it fails to parse: upstream
-		// returns after the first look without descending.
-		d.load(root, "")
-		return d.result, nil
+		// A valid root SKILL.md makes the whole repository one skill. When it fails to parse or
+		// is gated, upstream keeps scanning the containers below.
+		if d.load(root, "") {
+			return d.result, nil
+		}
 	}
 	d.scanContainer(filepath.Join(root, skillsContainer), skillsContainer)
 	return d.result, nil
@@ -100,25 +101,25 @@ func (d *discoverer) scanContainer(dir, rel string) {
 	}
 }
 
-// load parses the SKILL.md in dir and records the skill. Invalid, gated or duplicate skills are
-// skipped; invalid ones are reported as warnings.
-func (d *discoverer) load(dir, rel string) {
+// load parses the SKILL.md in dir and records the skill, reporting whether one was added. Invalid,
+// gated or duplicate skills are skipped; invalid ones are reported as warnings.
+func (d *discoverer) load(dir, rel string) bool {
 	skillPath := path.Join(rel, fileName)
 	raw, err := os.ReadFile(filepath.Join(dir, fileName))
 	if err != nil {
 		d.warn(skillPath, err)
-		return
+		return false
 	}
 	meta, err := ParseSkillMD(raw)
 	if err != nil {
 		d.warn(skillPath, err)
-		return
+		return false
 	}
 	if meta.Internal && !d.opts.IncludeInternal {
-		return
+		return false
 	}
 	if d.names[meta.Name] {
-		return
+		return false
 	}
 	d.names[meta.Name] = true
 	d.result.Skills = append(d.result.Skills, Skill{
@@ -127,6 +128,7 @@ func (d *discoverer) load(dir, rel string) {
 		Dir:         dir,
 		RelDir:      rel,
 	})
+	return true
 }
 
 func (d *discoverer) warn(skillPath string, err error) {
