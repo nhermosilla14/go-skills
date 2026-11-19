@@ -67,9 +67,9 @@ func RealPath(path string) (string, error) {
 	}
 	var rest []string
 	for p := abs; ; {
-		real, err := filepath.EvalSymlinks(p)
+		resolved, err := filepath.EvalSymlinks(p)
 		if err == nil {
-			return filepath.Join(append([]string{real}, rest...)...), nil
+			return filepath.Join(append([]string{resolved}, rest...)...), nil
 		}
 		parent := filepath.Dir(p)
 		if !errors.Is(err, fs.ErrNotExist) || parent == p {

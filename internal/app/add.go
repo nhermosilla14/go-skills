@@ -232,7 +232,7 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 		if err != nil {
 			return false, fmt.Errorf("hashing %s: %w", e.Name, err)
 		}
-		lock.Put(e.Name, lockEntry(in, e, digest, lock))
+		lock.Put(e.Name, lockEntry(in, e, digest))
 		recorded = true
 	}
 	if !recorded {
@@ -246,7 +246,7 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 
 // lockEntry builds the lock record for one installed skill. installedAt keeps the value of an
 // earlier install of the same name.
-func lockEntry(in recordInput, e install.Entry, digest string, lock *lockfile.File) lockfile.Entry {
+func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 	entry := lockfile.Entry{
 		Source:       localSource(in.project, in.source),
 		SourceType:   "local",

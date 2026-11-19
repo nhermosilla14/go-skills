@@ -51,7 +51,7 @@ func TestWithin(t *testing.T) {
 
 func TestRealPathNonExistingTail(t *testing.T) {
 	dir := t.TempDir()
-	real, err := filepath.EvalSymlinks(dir)
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestRealPathNonExistingTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RealPath: %v", err)
 	}
-	if want := filepath.Join(real, "missing", "deeper"); got != want {
+	if want := filepath.Join(resolved, "missing", "deeper"); got != want {
 		t.Errorf("RealPath = %q, want %q", got, want)
 	}
 }

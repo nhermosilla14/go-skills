@@ -38,12 +38,12 @@ func isExcluded(name string, isDir bool) bool {
 // unsigned bytes of their relative paths. Symlinks are followed when they stay inside root; links
 // that escape, are broken, or form a cycle are skipped.
 func CollectFiles(root string) ([]File, error) {
-	real, err := filepath.EvalSymlinks(root)
+	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
 	}
-	c := &collector{root: real}
-	if err := c.walk(real, "", map[string]bool{real: true}); err != nil {
+	c := &collector{root: resolved}
+	if err := c.walk(resolved, "", map[string]bool{resolved: true}); err != nil {
 		return nil, err
 	}
 	sort.Slice(c.files, func(i, j int) bool { return c.files[i].Rel < c.files[j].Rel })
@@ -112,20 +112,20 @@ func (c *collector) walk(dir, prefix string, ancestors map[string]bool) error {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		real, info, ok := c.resolve(filepath.Join(dir, name))
+		resolved, info, ok := c.resolve(filepath.Join(dir, name))
 		if !ok || isExcluded(name, info.IsDir()) {
 			continue
 		}
 		if !info.IsDir() {
-			c.files = append(c.files, File{Rel: prefix + name, Path: real})
+			c.files = append(c.files, File{Rel: prefix + name, Path: resolved})
 			continue
 		}
-		if ancestors[real] {
+		if ancestors[resolved] {
 			continue
 		}
-		ancestors[real] = true
-		err := c.walk(real, prefix+name+"/", ancestors)
-		delete(ancestors, real)
+		ancestors[resolved] = true
+		err := c.walk(resolved, prefix+name+"/", ancestors)
+		delete(ancestors, resolved)
 		if err != nil {
 			return err
 		}
@@ -135,17 +135,17 @@ func (c *collector) walk(dir, prefix string, ancestors map[string]bool) error {
 
 // resolve returns the real path and the target info of an entry. ok is false when the entry must
 // be skipped: broken, outside the root, or not a regular file or directory.
-func (c *collector) resolve(p string) (real string, info fs.FileInfo, ok bool) {
-	real, err := filepath.EvalSymlinks(p)
+func (c *collector) resolve(p string) (resolved string, info fs.FileInfo, ok bool) {
+	resolved, err := filepath.EvalSymlinks(p)
 	if err != nil {
 		return "", nil, false
 	}
-	if real != c.root && !strings.HasPrefix(real, c.root+string(filepath.Separator)) {
+	if resolved != c.root && !strings.HasPrefix(resolved, c.root+string(filepath.Separator)) {
 		return "", nil, false
 	}
-	info, err = os.Stat(real)
+	info, err = os.Stat(resolved)
 	if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 		return "", nil, false
 	}
-	return real, info, true
+	return resolved, info, true
 }

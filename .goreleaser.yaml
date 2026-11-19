@@ -1,0 +1,74 @@
+# GoReleaser v2 configuration. Release artifacts only: signing, SBOMs, container images
+# and package-manager taps are out of scope (see docs/adr/20261119-release-targets-and-pipeline.md).
+version: 2
+
+project_name: skills
+
+builds:
+  - id: skills
+    main: ./cmd/skills
+    binary: skills
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - "386"
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "6"
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
+
+archives:
+  - id: skills
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "arm" }}armv6{{ else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  draft: false

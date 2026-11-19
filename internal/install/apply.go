@@ -110,8 +110,8 @@ func forEachDistinctTarget(e Entry, write func(Target) Result) []Result {
 // targetKey identifies a destination by its real location, so a dotfiles symlink such as
 // .claude/skills -> .agents/skills still deduplicates with the canonical directory.
 func targetKey(path string) string {
-	if real, err := fsutil.RealPath(path); err == nil {
-		return real
+	if resolved, err := fsutil.RealPath(path); err == nil {
+		return resolved
 	}
 	return filepath.Clean(path)
 }

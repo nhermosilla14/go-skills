@@ -1,0 +1,77 @@
+version: "3"
+
+vars:
+  BINARY: skills
+
+tasks:
+  default:
+    desc: List the available tasks
+    silent: true
+    cmd: task --list
+
+  fmt:
+    desc: Verify gofmt formatting and that go.mod and go.sum are tidy
+    cmds:
+      - |
+        unformatted="$(gofmt -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "These files are not gofmt'd:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+      - go mod tidy -diff
+
+  vet:
+    desc: Run go vet on every package
+    cmd: go vet ./...
+
+  lint:
+    desc: Run golangci-lint with the repository configuration
+    cmd: golangci-lint run
+
+  test:
+    desc: Run the test suite with the race detector
+    cmd: go test -race ./...
+
+  build:
+    desc: Build the host binary into ./skills
+    cmd: go build -trimpath -o {{.BINARY}} ./cmd/skills
+
+  cross:
+    desc: Cross-compile the eight release targets into dist/cross
+    cmds:
+      - |
+        set -eu
+        mkdir -p dist/cross
+        for target in windows/386 windows/amd64 linux/386 linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64; do
+          goos=${target%%/*}
+          goarch=${target#*/}
+          goarm=""
+          name="skills_${goos}_${goarch}"
+          if [ "$goarch" = arm ]; then
+            goarm=6
+            name="${name}v6"
+          fi
+          if [ "$goos" = windows ]; then
+            name="${name}.exe"
+          fi
+          echo "building $name"
+          GOOS=$goos GOARCH=$goarch GOARM=$goarm CGO_ENABLED=0 go build -trimpath -o "dist/cross/$name" ./cmd/skills
+        done
+        ls -l dist/cross
+
+  smoke:
+    desc: Build the host binary and run the smoke test against it
+    deps:
+      - build
+    cmd: sh scripts/smoke.sh ./skills
+
+  release:snapshot:
+    desc: Build a local GoReleaser snapshot without publishing
+    cmd: goreleaser release --snapshot --clean
+
+  clean:
+    desc: Remove local build output
+    cmds:
+      - rm -rf dist
+      - rm -f {{.BINARY}} {{.BINARY}}.exe

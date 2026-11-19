@@ -293,7 +293,7 @@ func TestApplyLinkFailureFallsBackToCopy(t *testing.T) {
 	s := newSkill(t, project, "alpha")
 	selected, _ := agents.Expand([]string{"opencode", "claude-code"})
 	entries := Plan(project, []skill.Skill{s}, selected, PlanOptions{Env: envAt(project, t.TempDir())})
-	failing := func(link, target string) error { return errors.New("links are not permitted") }
+	failing := func(_, _ string) error { return errors.New("links are not permitted") }
 	results := applyWith(project, entries, failing)
 	var claude *Result
 	for i := range results {

@@ -72,7 +72,7 @@ func TestSortedKeysUTF16(t *testing.T) {
 	iEmoji := strings.Index(s, "\U0001F389")
 	iTilde := strings.Index(s, "\uFF5E")
 	iZ := strings.Index(s, `"z"`)
-	if !(iZ < iEmoji && iEmoji < iTilde) {
+	if iZ >= iEmoji || iEmoji >= iTilde {
 		t.Errorf("keys not in UTF-16 order: z=%d emoji=%d tilde=%d", iZ, iEmoji, iTilde)
 	}
 }

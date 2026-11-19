@@ -1,5 +1,7 @@
 # Release pipeline and version metadata
 
+- Status: Done
+
 - Intents: 20261119-release-engineering
 - ADRs: 20261119-release-targets-and-pipeline
 

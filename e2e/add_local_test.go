@@ -167,7 +167,8 @@ func TestE2EAddLocalInstall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %s is not a symlink: %v", name, link, err)
 		}
-		if filepath.IsAbs(target) {
+		// Junctions, the Windows link, store absolute targets by design.
+		if runtime.GOOS != "windows" && filepath.IsAbs(target) {
 			t.Errorf("%s: link target %q is absolute", name, target)
 		}
 		if _, err := os.Stat(filepath.Join(link, "SKILL.md")); err != nil {

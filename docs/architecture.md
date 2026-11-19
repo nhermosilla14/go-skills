@@ -45,6 +45,10 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | `internal/source` | Source grammar, fetches, authentication. | planned |
 | `e2e/` | Built-binary tests with their fixtures. | partial |
 
+Build and release: GoReleaser cross-compiles the eight targets from one commit with version
+metadata injected through `-ldflags`; CI runs tests on Linux, macOS and Windows, lints, and
+cross-compiles every target. The Taskfile wraps the same commands.
+
 The clock seam is `app.Env.Now`; no package calls `time.Now` directly except `cmd/skills`, which
 wires the real clock. `internal/source`, TUI packages and the global lock do not exist yet.
 

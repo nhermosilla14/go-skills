@@ -8,10 +8,10 @@ scope behind the project.
 
 ## Status
 
-Early development. There is no release yet. The walking skeleton works: `add` installs from a
-local directory for the `opencode` and `claude-code` agents, writes a v2 `skills-lock.json`, and
-implements the hash contract. Everything else is marked `TODO` and arrives slice by slice; see
-`docs/branch/slices/` for the plan and `docs/spec/` for what is delivered.
+Early development. There is no tagged release yet. `add` works for local directories and all 79
+agents, writes a v2 `skills-lock.json`, and implements the content-hash contract; the release
+pipeline builds every supported platform. Everything else is marked `TODO` and arrives slice by
+slice; see `docs/branch/slices/` for the plan and `docs/spec/` for what is delivered.
 
 ## Prerequisites
 
@@ -19,16 +19,22 @@ implements the hash contract. Everything else is marked `TODO` and arrives slice
 - `git`, used to fetch sources and to run the repository scripts.
 - No Node.js runtime. Installing the upstream CLI is not required or used.
 
-`task` is optional and arrives with the release slice: it will run the same commands documented in
-Development guidelines.
+`task` (go-task v3) is optional; it runs the same commands documented in Development guidelines.
 
 ## Getting started
 
 ```sh
 git clone https://github.com/nhermosilla14/go-skills.git
 cd go-skills
-go build -o skills ./cmd/skills
+task build            # or: go build -trimpath -o skills ./cmd/skills
 ./skills --help
+```
+
+Releases are published as archives for every target pair listed below; until the first tag, build
+from source. To reproduce a release locally:
+
+```sh
+task release:snapshot   # goreleaser release --snapshot --clean, artifacts in dist/
 ```
 
 Version metadata is injected at build time; a plain `go build` reports development defaults:
@@ -104,10 +110,12 @@ the targets CI and release builds must cover.
 .
 ├── AGENTS.md                  Rules and conventions for humans and agents
 ├── README.md                  This file
-├── Taskfile.yml               Build, test, lint and release tasks (TODO: slice 04)
+├── Taskfile.yml               Build, test, lint and release tasks
+├── .goreleaser.yaml           Release builds, archives and checksums
+├── .golangci.yml              Linter configuration
 ├── cmd/
-│   └── skills/                `package main`: flag parsing, dispatch, wiring (TODO)
-├── internal/                  Implementation packages, not importable from outside the module (TODO)
+│   └── skills/                `package main`: dispatch, exit codes, build metadata
+├── internal/                  Implementation packages, not importable from outside the module
 ├── docs/                      Decisions and current behavior: vision, spec, ADRs, architecture
 │   ├── README.md              Documentation index
 │   ├── vision.md              Goals, scope and non-goals
@@ -120,16 +128,18 @@ the targets CI and release builds must cover.
 │   ├── technical/             Upstream architecture, dependencies and porting risks
 │   └── README.md              Index and headline findings
 ├── scripts/
-│   └── check-branch-docs.sh   Merge gate for unfinished branch records
+│   ├── check-branch-docs.sh   Merge gate for unfinished branch records
+│   └── smoke.sh               Version, help and install smoke test for a built binary
 ├── .agents/
 │   └── skills/                Vendored `general-software-development` skill (the workflow rules)
 │       └── general-software-development/
 └── .github/
     └── workflows/
-        └── merge-gate.yml     Pull-request checks for `main`
+        ├── merge-gate.yml     Pull-request checks: docs gate, tests, lint, cross-compile
+        └── release.yml        Tag-driven release published by GoReleaser
 ```
 
-Directories listed with `(TODO)` do not exist yet.
+Directories listed with `(TODO)` in the usage table do not exist yet; everything else is present.
 
 ## Development guidelines
 
@@ -142,8 +152,12 @@ go vet ./...
 gofmt -l .        # must print nothing; `go tool gofmt -l .` if gofmt is not on PATH
 ```
 
-`golangci-lint` v2 is the linter. The Taskfile planned for slice 04 wraps the common cases:
-`task build`, `task test`, `task lint`, `task release:snapshot`.
+`golangci-lint` v2 is the linter. The Taskfile wraps the common cases: `task build`, `task test`,
+`task lint`, `task fmt`, `task vet`, `task cross`, `task smoke`, `task release:snapshot`,
+`task clean`.
+
+Release process: push a `v*` tag. `release.yml` re-runs the tests and publishes archives plus
+`checksums.txt` through GoReleaser. Signing and notarization are not set up; see the ADR.
 
 Work follows the loop Requirements → Design → Slices → Code → Test, one vertical slice at a time,
 with each stage reviewed before the next. The rules are summarized in [`AGENTS.md`](AGENTS.md) and
