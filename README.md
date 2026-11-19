@@ -76,6 +76,9 @@ Current, working subset:
 ./skills add vercel-labs/agent-skills -g -a opencode -y
 ./skills list -g
 ./skills remove -g --all
+
+# Rebuild a clean checkout from the lock.
+./skills install
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -100,7 +103,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | `TODO` |
 | `find` | Search skill catalogs. | `TODO` |
 | `init` | Create a new `SKILL.md` skeleton. | `TODO` |
-| `install` | With a source, same as `add`; without one, restore from `skills-lock.json`. | `TODO` |
+| `install` | With a source, same as `add`; without one, restore project skills from `skills-lock.json` at their pinned commits. | Project restore |
 | `experimental_install`, `experimental_sync` | Upstream experimental commands. `experimental_install` restores from the lock file; `experimental_sync` (the `node_modules`/workspace sync) is out of scope and will stay as a clear "not supported" stub. | `TODO` |
 
 Interactive runs use a keyboard-driven flow: grouped skill selection with descriptions and a

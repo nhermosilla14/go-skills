@@ -1,7 +1,6 @@
 # Restore from the lock
 
-- Status: In progress
-
+- Status: Done
 - Intents: 20261119-restore-from-lock
 - ADRs: 20261119-restore-and-frozen-lockfile
 

@@ -43,6 +43,26 @@ func (r *updateRunner) Run(_ context.Context, cmd source.Command) (source.Output
 		args = args[2:]
 	}
 	switch {
+	case len(args) >= 1 && args[0] == "init":
+		// The commit-pin path initialises a repository in place before fetching the SHA.
+		return source.Output{}, nil
+	case len(args) >= 4 && args[0] == "remote" && args[1] == "add" && args[2] == "origin":
+		url := args[3]
+		r.clones = append(r.clones, url)
+		r.dirs[filepath.Clean(cmd.Dir)] = url
+		if message, ok := r.fail[url]; ok {
+			return source.Output{Stderr: message}, errors.New("exit status 128")
+		}
+		return source.Output{}, nil
+	case len(args) >= 1 && args[0] == "fetch":
+		return source.Output{}, nil
+	case len(args) >= 1 && args[0] == "checkout":
+		url := r.dirs[filepath.Clean(cmd.Dir)]
+		tree, ok := r.trees[url]
+		if !ok {
+			return source.Output{Stderr: "fatal: repository not found"}, errors.New("exit status 128")
+		}
+		return source.Output{}, copyTree(tree, cmd.Dir)
 	case len(args) >= 2 && args[0] == "clone":
 		url, dir := args[len(args)-2], args[len(args)-1]
 		r.clones = append(r.clones, url)

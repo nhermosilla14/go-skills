@@ -36,6 +36,46 @@ func TestParseCommands(t *testing.T) {
 	}
 }
 
+func TestParseRestore(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want app.RestoreOptions
+	}{
+		{"install without source", []string{"install"}, app.RestoreOptions{}},
+		{"i without source", []string{"i"}, app.RestoreOptions{}},
+		{"install options", []string{"install", "-a", "claude-code", "opencode", "--force", "--dry-run"},
+			app.RestoreOptions{Agents: []string{"claude-code", "opencode"}, Force: true, DryRun: true}},
+		{"experimental install", []string{"experimental_install", "--agent=*", "--force"},
+			app.RestoreOptions{Agents: []string{"*"}, Force: true}},
+		{"experimental install short agent", []string{"experimental_install", "-a", "opencode"},
+			app.RestoreOptions{Agents: []string{"opencode"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cmd.Kind != KindRestore {
+				t.Fatalf("Kind = %v, want KindRestore", cmd.Kind)
+			}
+			if !reflect.DeepEqual(cmd.Restore, tc.want) {
+				t.Errorf("Restore = %+v, want %+v", cmd.Restore, tc.want)
+			}
+		})
+	}
+	for _, args := range [][]string{{"experimental_install", "-h"}, {"install", "--help"}} {
+		cmd, err := Parse(args)
+		if err != nil {
+			t.Fatalf("Parse %v: %v", args, err)
+		}
+		if cmd.Kind != KindHelp {
+			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		}
+	}
+}
+
 func TestParseAddOptions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -145,7 +185,12 @@ func TestParseUsageErrors(t *testing.T) {
 		{"unknown short flag", []string{"add", "./x", "-q"}, "unknown option '-q'"},
 		{"extra source", []string{"add", "./a", "./b"}, "unexpected argument './b'"},
 		{"missing source", []string{"add", "-y"}, "missing required argument: source"},
-		{"install without source", []string{"install"}, "restoring from skills-lock.json is not supported yet"},
+		{"install with add-only option", []string{"install", "--skill", "a"}, "--skill does not apply when restoring"},
+		{"install global", []string{"install", "-g"}, "--global cannot be used when restoring"},
+		{"experimental install global", []string{"experimental_install", "-g"}, "-g cannot be used when restoring"},
+		{"experimental install source", []string{"experimental_install", "./x"}, "unexpected argument './x'"},
+		{"install force with source", []string{"install", "./x", "--force"}, "--force only applies when restoring"},
+		{"install dry-run with source", []string{"install", "./x", "--dry-run"}, "--dry-run only applies when restoring"},
 		{"list flag without value", []string{"add", "./x", "--agent", "-y"}, "--agent requires an agent name"},
 		{"skill equals empty", []string{"add", "./x", "--skill="}, "--skill requires a skill name"},
 		{"boolean with value", []string{"add", "./x", "--copy=1"}, "--copy does not take a value"},
@@ -445,6 +490,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 		"claude-code", "opencode", "--copy", "--list", "--json", "--subagent",
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
 		"remove, rm, r", "--all", "update, upgrade", "--project",
+		"experimental_install", "Restore options:", "--dry-run",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

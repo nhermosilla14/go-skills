@@ -42,6 +42,25 @@ func Apply(scopeRoot string, entries []Entry) []Result {
 	return applyWith(scopeRoot, entries, platformLink)
 }
 
+// Relink repairs the agent links of symlink entries whose canonical copy is already correct.
+// Nothing is copied over the canonical directory, so an unchanged install is not rewritten.
+func Relink(scopeRoot string, entries []Entry) []Result {
+	return relinkWith(scopeRoot, entries, platformLink)
+}
+
+func relinkWith(scopeRoot string, entries []Entry, link linker) []Result {
+	var results []Result
+	for _, e := range entries {
+		if e.Mode != ModeSymlink {
+			continue
+		}
+		results = append(results, forEachDistinctTarget(e, func(t Target) Result {
+			return linkTarget(scopeRoot, e, t, link)
+		})...)
+	}
+	return results
+}
+
 func applyWith(projectDir string, entries []Entry, link linker) []Result {
 	var results []Result
 	for _, e := range entries {

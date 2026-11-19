@@ -61,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRemove(cmd.Remove, stderr)
 	case cli.KindUpdate:
 		return runUpdate(cmd.Update, stderr)
+	case cli.KindRestore:
+		return runRestore(cmd.Restore, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -206,6 +208,24 @@ func runUpdate(opts app.UpdateOptions, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	cli.WriteUpdate(stderr, rep)
+	if rep.Failed() {
+		return exitFailure
+	}
+	return exitOK
+}
+
+// runRestore runs `install` without a source, which rebuilds the project from skills-lock.json.
+// Restore never prompts, so it takes no prompter.
+func runRestore(opts app.RestoreOptions, stderr io.Writer) int {
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	rep, err := app.Restore(opts, env)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	cli.WriteRestore(stderr, rep)
 	if rep.Failed() {
 		return exitFailure
 	}

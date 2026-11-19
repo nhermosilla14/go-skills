@@ -17,17 +17,19 @@ const (
 	KindCheck
 	KindRemove
 	KindUpdate
+	KindRestore
 )
 
 // Command is a parsed command line.
 type Command struct {
-	Kind   Kind
-	Add    app.AddOptions    // set when Kind is KindAdd
-	List   app.ListOptions   // set when Kind is KindList
-	Check  app.CheckOptions  // set when Kind is KindCheck
-	Remove app.RemoveOptions // set when Kind is KindRemove
-	Update app.UpdateOptions // set when Kind is KindUpdate
-	JSON   bool              // --json, for list
+	Kind    Kind
+	Add     app.AddOptions     // set when Kind is KindAdd
+	List    app.ListOptions    // set when Kind is KindList
+	Check   app.CheckOptions   // set when Kind is KindCheck
+	Remove  app.RemoveOptions  // set when Kind is KindRemove
+	Update  app.UpdateOptions  // set when Kind is KindUpdate
+	Restore app.RestoreOptions // set when Kind is KindRestore
+	JSON    bool               // --json, for list
 }
 
 // addNames are the spellings of the add command. install and i are add with a source.
@@ -47,6 +49,8 @@ func Parse(args []string) (Command, error) {
 		return Command{Kind: KindVersion}, nil
 	case addNames[name]:
 		return parseAdd(name, args[1:])
+	case name == "experimental_install":
+		return parseRestore(args[1:])
 	case name == "list" || name == "ls":
 		return parseList(args[1:])
 	case name == "check":
@@ -64,17 +68,21 @@ func Parse(args []string) (Command, error) {
 
 // addParser accumulates the options of add while the arguments are read.
 type addParser struct {
-	opts   app.AddOptions
-	help   bool
-	global bool
-	all    bool
+	opts    app.AddOptions
+	help    bool
+	global  bool
+	all     bool
+	restore bool   // install or i: no source means restore
+	force   bool   // --force, restore only
+	dryRun  bool   // --dry-run, restore only
+	addOnly string // the first add-only option that cannot apply to a restore
 }
 
 // shortNames maps the single-letter switches of add to their long names.
 var shortNames = map[byte]string{'a': "agent", 's': "skill", 'y': "yes", 'l': "list", 'g': "global", 'h': "help"}
 
 func parseAdd(name string, args []string) (Command, error) {
-	p := &addParser{}
+	p := &addParser{restore: name == "install" || name == "i"}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		var err error
@@ -107,12 +115,34 @@ func parseAdd(name string, args []string) (Command, error) {
 	}
 	p.opts.Global = p.global
 	if p.opts.Source == "" {
-		if name == "install" || name == "i" {
-			return Command{}, usagef("restoring from skills-lock.json is not supported yet; pass a source")
+		if !p.restore {
+			return Command{}, usagef("missing required argument: source")
 		}
-		return Command{}, usagef("missing required argument: source")
+		if err := p.restoreError(); err != nil {
+			return Command{}, err
+		}
+		return Command{Kind: KindRestore, Restore: app.RestoreOptions{
+			Agents: p.opts.Agents, Force: p.force, DryRun: p.dryRun,
+		}}, nil
+	}
+	if p.force {
+		return Command{}, usagef("--force only applies when restoring from skills-lock.json")
+	}
+	if p.dryRun {
+		return Command{}, usagef("--dry-run only applies when restoring from skills-lock.json")
 	}
 	return Command{Kind: KindAdd, Add: p.opts}, nil
+}
+
+// restoreError rejects the options that cannot apply to a restore from the lock.
+func (p *addParser) restoreError() error {
+	if p.global {
+		return usagef("--global cannot be used when restoring from skills-lock.json")
+	}
+	if p.addOnly != "" {
+		return usagef("%s does not apply when restoring from skills-lock.json", p.addOnly)
+	}
+	return nil
 }
 
 func (p *addParser) addSource(arg string) error {
@@ -131,6 +161,19 @@ func (p *addParser) long(args []string, i int) (int, error) {
 		return p.repeatable(args, i, name, value, hasValue)
 	case "rename":
 		return p.value(args, i, name, value, hasValue)
+	case "force", "dry-run":
+		if !p.restore {
+			return i, usagef("unknown option '--%s'", name)
+		}
+		if hasValue {
+			return i, usagef("--%s does not take a value", name)
+		}
+		if name == "force" {
+			p.force = true
+		} else {
+			p.dryRun = true
+		}
+		return i, nil
 	case "copy", "yes", "list", "global", "help", "all", "full-depth", "json":
 		if hasValue {
 			return i, usagef("--%s does not take a value", name)
@@ -197,8 +240,10 @@ func (p *addParser) repeatable(args []string, i int, name, inline string, hasInl
 		p.opts.Agents = append(p.opts.Agents, values...)
 	case "skill":
 		p.opts.Skills = append(p.opts.Skills, values...)
+		p.markAddOnly("--skill")
 	case "subagent":
 		p.opts.Subagents = append(p.opts.Subagents, values...)
+		p.markAddOnly("--subagent")
 	}
 	return last, nil
 }
@@ -210,12 +255,14 @@ func (p *addParser) value(args []string, i int, name, inline string, hasInline b
 			return i, usagef("--%s requires a skill name", name)
 		}
 		p.opts.Rename = inline
+		p.markAddOnly("--rename")
 		return i, nil
 	}
 	if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
 		return i, usagef("--%s requires a skill name", name)
 	}
 	p.opts.Rename = args[i+1]
+	p.markAddOnly("--rename")
 	return i + 1, nil
 }
 
@@ -223,21 +270,126 @@ func (p *addParser) boolean(name string) {
 	switch name {
 	case "copy":
 		p.opts.Copy = true
+		p.markAddOnly("--copy")
 	case "yes":
 		p.opts.Yes = true
 	case "list":
 		p.opts.List = true
+		p.markAddOnly("--list")
 	case "global":
 		p.global = true
 	case "help":
 		p.help = true
 	case "all":
 		p.all = true
+		p.markAddOnly("--all")
 	case "full-depth":
 		p.opts.FullDepth = true
+		p.markAddOnly("--full-depth")
 	case "json":
 		p.opts.JSON = true
+		p.markAddOnly("--json")
 	}
+}
+
+// markAddOnly remembers the first option that cannot apply to a restore from the lock.
+func (p *addParser) markAddOnly(option string) {
+	if p.addOnly == "" {
+		p.addOnly = option
+	}
+}
+
+// restoreParser accumulates the options of experimental_install.
+type restoreParser struct {
+	opts app.RestoreOptions
+	help bool
+}
+
+// parseRestore parses `experimental_install`, which always restores: it takes no source, and -g is
+// a usage error because restore is project-only.
+func parseRestore(args []string) (Command, error) {
+	p := &restoreParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var err error
+		switch {
+		case arg == "--":
+			if len(args) > i+1 {
+				err = usagef("unexpected argument '%s'", args[i+1])
+			}
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			i, err = p.long(args, i)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			i, err = p.short(args, i)
+		default:
+			err = usagef("unexpected argument '%s'", arg)
+		}
+		if err != nil {
+			return Command{}, err
+		}
+	}
+	if p.help {
+		return Command{Kind: KindHelp}, nil
+	}
+	return Command{Kind: KindRestore, Restore: p.opts}, nil
+}
+
+func (p *restoreParser) long(args []string, i int) (int, error) {
+	name, value, hasValue := strings.Cut(args[i][2:], "=")
+	switch name {
+	case "agent":
+		return p.agent(args, i, value, hasValue)
+	case "force", "dry-run", "help":
+		if hasValue {
+			return i, usagef("--%s does not take a value", name)
+		}
+		switch name {
+		case "force":
+			p.opts.Force = true
+		case "dry-run":
+			p.opts.DryRun = true
+		case "help":
+			p.help = true
+		}
+		return i, nil
+	case "global":
+		return i, usagef("--global cannot be used when restoring from skills-lock.json")
+	}
+	return i, usagef("unknown option '--%s'", name)
+}
+
+func (p *restoreParser) short(args []string, i int) (int, error) {
+	group, value, hasValue := strings.Cut(args[i][1:], "=")
+	for k := 0; k < len(group); k++ {
+		letter := group[k]
+		switch letter {
+		case 'a':
+			if k != len(group)-1 {
+				return i, usagef("-a takes a value and must be last in its group")
+			}
+			return p.agent(args, i, value, hasValue)
+		case 'g':
+			return i, usagef("-g cannot be used when restoring from skills-lock.json")
+		case 'h':
+			if hasValue && k == len(group)-1 {
+				return i, usagef("-%c does not take a value", letter)
+			}
+			p.help = true
+		default:
+			return i, usagef("unknown option '-%c'", letter)
+		}
+	}
+	return i, nil
+}
+
+func (p *restoreParser) agent(args []string, i int, value string, hasValue bool) (int, error) {
+	values, last := collectValues(args, i, value, hasValue)
+	if len(values) == 0 || (hasValue && value == "") {
+		return i, usagef("--agent requires an agent name")
+	}
+	p.opts.Agents = append(p.opts.Agents, values...)
+	return last, nil
 }
 
 // listParser accumulates the options of list.
