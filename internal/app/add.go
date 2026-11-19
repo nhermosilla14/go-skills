@@ -24,8 +24,8 @@ import (
 // to exit code 2.
 var ErrUsage = errors.New("usage error")
 
-// ErrPromptRequired reports that the install needs an answer to a prompt, and there is no
-// interactive flow yet, so -y is required.
+// ErrPromptRequired reports that the install needs an answer to a prompt and no interactive flow
+// can run, so -y is required.
 var ErrPromptRequired = errors.New("prompt required")
 
 // AddOptions are the inputs of the add use case, as parsed from the command line.
@@ -36,8 +36,11 @@ type AddOptions struct {
 	Yes       bool     // proceed without prompting
 	Copy      bool     // copy instead of linking
 	List      bool     // list the skills and install nothing
+	JSON      bool     // machine-readable output; no prompts
 	FullDepth bool     // search every subdirectory, even below a root SKILL.md
 	Rename    string   // install one skill under this name
+	Subagents []string // Eve subagent targets; parsed but not installed yet
+	Global    bool     // global scope; only reachable from the library, the parser rejects -g
 }
 
 // Env carries what the use case needs from the process. Now must not be nil.
@@ -51,10 +54,14 @@ type Env struct {
 
 // Report is the outcome of an add run, for the CLI to render.
 type Report struct {
-	Listed   []skill.Skill    // set by --list
-	Warnings []string         // skills that were skipped while discovering
-	Results  []install.Result // one per skill and agent
-	LockPath string           // set when the lock file was written
+	Listed   []skill.Skill     // set by --list
+	Warnings []string          // skills that were skipped while discovering
+	Results  []install.Result  // one per skill and agent
+	LockPath string            // set when the lock file was written
+	Source   string            // source as resolved from the command line
+	Ref      string            // git ref, empty for local sources
+	Scope    string            // project or global
+	Hashes   map[string]string // installed name → content hash, for --json
 }
 
 // Failed reports whether any skill failed for any agent.
@@ -68,10 +75,16 @@ func (r Report) Failed() bool {
 }
 
 // Add installs the skills of a source into the project. The flow is: validate agents, parse and
-// acquire the source, discover, stop for --list, require -y, select, plan, apply, record.
-func Add(opts AddOptions, env Env) (Report, error) {
+// acquire the source, discover, stop for --list, ask the questions the prompt matrix calls for,
+// select, plan, apply, record. The prompter is optional: without one, a run that needs an answer
+// returns ErrPromptRequired instead of prompting.
+func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
+	var prompter Prompter
+	if len(prompters) > 0 {
+		prompter = prompters[0]
+	}
 	agentEnv := env.agentsEnv()
-	selected, err := selectAgents(opts.Agents, agentEnv, opts.Yes)
+	explicit, err := selectAgents(opts.Agents, agentEnv, opts.Yes)
 	if err != nil {
 		return Report{}, err
 	}
@@ -95,7 +108,12 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	rep := Report{Warnings: found.Warnings}
+	rep := Report{
+		Warnings: found.Warnings,
+		Source:   src.Source,
+		Ref:      src.Ref,
+		Scope:    string(ScopeProject),
+	}
 	if len(found.Skills) == 0 {
 		return rep, noSkillsError(src, tree)
 	}
@@ -103,26 +121,29 @@ func Add(opts AddOptions, env Env) (Report, error) {
 		rep.Listed = found.Skills
 		return rep, nil
 	}
-	if !opts.Yes {
-		return rep, promptRequired(env.IsTTY)
-	}
-	requested := requestedSkills(opts.Skills, src.SkillSelector)
-	chosen, err := selectSkills(found.Skills, requested)
-	if err != nil && !opts.FullDepth {
-		// A requested skill may sit below discovery's normal depth, so retry once, as upstream does.
-		deeper, deeperErr := discover(tree.Dir, src, env.IncludeInternal, true)
-		if deeperErr == nil {
-			if deeperChosen, selectErr := selectSkills(deeper.Skills, requested); selectErr == nil {
-				found, chosen, err = deeper, deeperChosen, nil
-				rep.Warnings = found.Warnings
-			}
-		}
-	}
+	questions := questionsFor(opts, src, found.Skills, explicit, agentEnv)
+	answers, err := ask(questions, env, prompter)
 	if err != nil {
 		return rep, err
 	}
+	if answers.Scope == ScopeGlobal {
+		return rep, errors.New("global installs are not implemented yet; install into the project instead")
+	}
+	requested := requestedSkills(opts.Skills, src.SkillSelector)
+	chosen, err := chooseSkills(opts, tree, src, env.IncludeInternal, &found, requested, questions, answers)
+	if err != nil {
+		return rep, err
+	}
+	rep.Warnings = found.Warnings
 	if err := validateRename(opts.Rename, chosen); err != nil {
 		return rep, err
+	}
+	selected, err := chooseAgents(explicit, answers)
+	if err != nil {
+		return rep, err
+	}
+	if hasStep(questions, StepConfirm) && !answers.Proceed {
+		return rep, ErrCancelled
 	}
 	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
 	lock, err := lockfile.Load(lockPath)
@@ -131,10 +152,12 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	}
 	entries := install.Plan(env.WorkDir, chosen, selected, install.PlanOptions{
 		Env:       agentEnv,
-		ForceCopy: opts.Copy,
+		ForceCopy: opts.Copy || answers.Mode == install.ModeCopy,
+		Global:    opts.Global,
 		Rename:    opts.Rename,
 	})
 	rep.Results = install.Apply(env.WorkDir, entries)
+	rep.Hashes = map[string]string{}
 	saved, err := recordInstalled(lock, lockPath, recordInput{
 		project: env.WorkDir,
 		source:  src,
@@ -142,6 +165,7 @@ func Add(opts AddOptions, env Env) (Report, error) {
 		commit:  tree.Commit,
 		entries: entries,
 		results: rep.Results,
+		hashes:  rep.Hashes,
 	})
 	if err != nil {
 		return rep, err
@@ -150,6 +174,126 @@ func Add(opts AddOptions, env Env) (Report, error) {
 		rep.LockPath = lockPath
 	}
 	return rep, nil
+}
+
+// questionsFor builds the questions of one run from its flags and what discovery found.
+func questionsFor(opts AddOptions, src source.Source, skills []skill.Skill,
+	candidates []agents.Agent, agentEnv agents.Environment) Questions {
+	detected := agents.Detect(agentEnv)
+	eve := false
+	for _, a := range detected {
+		if a.ID == "eve" {
+			eve = true
+		}
+	}
+	requested := requestedSkills(opts.Skills, src.SkillSelector)
+	return PlanQuestions(opts, Facts{
+		Source:          src.Source,
+		Skills:          skills,
+		RequestedSkills: requested,
+		Detected:        detected,
+		Candidates:      candidates,
+		All:             agents.All(),
+		EveDetected:     eve,
+		CanGoGlobal:     anyGlobalDir(candidates, agentEnv),
+		Mode:            install.ResolveMode(candidates, opts.Copy),
+	})
+}
+
+// ask runs the prompts the matrix calls for. No steps mean no prompter is needed; any failure to
+// ask becomes the documented ErrPromptRequired.
+func ask(questions Questions, env Env, prompter Prompter) (Answers, error) {
+	if len(questions.Steps) == 0 {
+		return Answers{}, nil
+	}
+	if prompter == nil {
+		return Answers{}, promptRequired(env.IsTTY)
+	}
+	answers, err := prompter.Ask(questions)
+	if errors.Is(err, ErrPromptRequired) {
+		return Answers{}, promptRequired(env.IsTTY)
+	}
+	if err != nil {
+		return Answers{}, err
+	}
+	return answers, nil
+}
+
+// chooseSkills resolves the skills of the run: the answers of the selector when it was shown, and
+// the flags otherwise, with upstream's one retry at full depth for a named skill.
+func chooseSkills(opts AddOptions, tree source.Tree, src source.Source, includeInternal bool,
+	found *skill.Result, requested []string, questions Questions, answers Answers) ([]skill.Skill, error) {
+	if hasStep(questions, StepSkills) {
+		return selectByNames(found.Skills, answers.Skills)
+	}
+	chosen, err := selectSkills(found.Skills, requested)
+	if err != nil && !opts.FullDepth {
+		// A requested skill may sit below discovery's normal depth, so retry once, as upstream does.
+		deeper, deeperErr := discover(tree.Dir, src, includeInternal, true)
+		if deeperErr == nil {
+			if deeperChosen, selectErr := selectSkills(deeper.Skills, requested); selectErr == nil {
+				*found, chosen, err = deeper, deeperChosen, nil
+			}
+		}
+	}
+	return chosen, err
+}
+
+// chooseAgents resolves the agents of the run from the selector answers when it ran, and from the
+// command line and detection otherwise.
+func chooseAgents(explicit []agents.Agent, answers Answers) ([]agents.Agent, error) {
+	if len(answers.Agents) == 0 {
+		return explicit, nil
+	}
+	selected, invalid := agents.Expand(answers.Agents)
+	if len(invalid) > 0 {
+		return nil, fmt.Errorf("%w: invalid agents: %s (valid: %s)", ErrUsage,
+			strings.Join(invalid, ", "), strings.Join(agents.IDs(), ", "))
+	}
+	return selected, nil
+}
+
+// selectByNames picks the skills named by a selector answer, in discovery order.
+func selectByNames(all []skill.Skill, names []string) ([]skill.Skill, error) {
+	if len(names) == 0 {
+		return nil, errors.New("no skills selected")
+	}
+	want := map[string]bool{}
+	for _, name := range names {
+		want[name] = true
+	}
+	var chosen []skill.Skill
+	for _, s := range all {
+		if want[s.Name] {
+			chosen = append(chosen, s)
+			delete(want, s.Name)
+		}
+	}
+	for name := range want {
+		return nil, fmt.Errorf("no skill named %q in source", name)
+	}
+	return chosen, nil
+}
+
+// hasStep reports whether the flow asks step.
+func hasStep(questions Questions, step StepID) bool {
+	for _, s := range questions.Steps {
+		if s == step {
+			return true
+		}
+	}
+	return false
+}
+
+// anyGlobalDir reports whether at least one candidate agent can install globally, which is when
+// the scope prompt appears.
+func anyGlobalDir(candidates []agents.Agent, env agents.Environment) bool {
+	for _, a := range candidates {
+		if a.GlobalSkillsDir(env) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // discover finds the skills of an acquired tree. Remote subpaths are folded into each skill's
@@ -212,11 +356,25 @@ func (e Env) agentsEnv() agents.Environment {
 	return env
 }
 
+// nonTTYPrompt is the documented diagnostic a refused prompt prints. It reads as a sentence, so
+// it is kept as data instead of an error-string literal.
+const nonTTYPrompt = "Interactive prompt required but stdin is not a TTY. Nothing was installed. " +
+	"Use --agent <name> (or --agent '*') and -y to run non-interactively."
+
+// promptError carries a documented diagnostic while staying ErrPromptRequired for callers.
+type promptError struct {
+	msg string
+}
+
+func (e *promptError) Error() string { return e.msg }
+
+func (e *promptError) Unwrap() error { return ErrPromptRequired }
+
 func promptRequired(isTTY bool) error {
 	if isTTY {
-		return fmt.Errorf("%w: interactive selection is not available yet; pass -y to install", ErrPromptRequired)
+		return &promptError{msg: "no interactive prompt is available; pass -y to install without prompts"}
 	}
-	return fmt.Errorf("%w: stdin is not a terminal; pass -y to install without prompts", ErrPromptRequired)
+	return &promptError{msg: nonTTYPrompt}
 }
 
 // selectSkills picks the skills named on the command line. No names, or "*", selects all.
@@ -260,6 +418,7 @@ type recordInput struct {
 	commit  string
 	entries []install.Entry
 	results []install.Result
+	hashes  map[string]string
 }
 
 // recordInstalled adds every skill that landed for at least one agent and failed for none to the
@@ -274,6 +433,9 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 		digest, err := hashInstalled(loc)
 		if err != nil {
 			return false, fmt.Errorf("hashing %s: %w", e.Name, err)
+		}
+		if in.hashes != nil {
+			in.hashes[e.Name] = digest
 		}
 		lock.Put(e.Name, lockEntry(in, e, digest))
 		recorded = true

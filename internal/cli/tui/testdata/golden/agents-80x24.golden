@@ -1,0 +1,12 @@
+Select agents to install
+--------------------------------------------------------------------------------
+Universal (.agents/skills)
+> [x] Codex
+  [x] Cursor
+  [x] OpenCode
+  ...and 1 more
+Other agents
+  [ ] Claude Code  .claude/skills
+  [x] Grok Build  .grok/skills
+--------------------------------------------------------------------------------
+k up | j down | space toggle | a all | enter confirm | esc cancel

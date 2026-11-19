@@ -98,6 +98,16 @@ func TestParseAddOptions(t *testing.T) {
 			want: app.AddOptions{Source: "./x", Agents: []string{"*"}, Skills: []string{"*"}, Yes: true},
 		},
 		{
+			name: "json flag",
+			args: []string{"add", "./x", "-y", "--json"},
+			want: app.AddOptions{Source: "./x", Yes: true, JSON: true},
+		},
+		{
+			name: "subagent list is parsed",
+			args: []string{"add", "./x", "--subagent", "root", "helper", "-y"},
+			want: app.AddOptions{Source: "./x", Subagents: []string{"root", "helper"}, Yes: true},
+		},
+		{
 			name: "rename last occurrence wins",
 			args: []string{"add", "./x", "--rename", "first", "--rename=second"},
 			want: app.AddOptions{Source: "./x", Rename: "second"},
@@ -139,6 +149,8 @@ func TestParseUsageErrors(t *testing.T) {
 		{"rename without value", []string{"add", "./x", "--rename"}, "--rename requires a skill name"},
 		{"rename with empty value", []string{"add", "./x", "--rename="}, "--rename requires a skill name"},
 		{"full depth with value", []string{"add", "./x", "--full-depth=1"}, "--full-depth does not take a value"},
+		{"json with value", []string{"add", "./x", "--json=1"}, "--json does not take a value"},
+		{"subagent without value", []string{"add", "./x", "--subagent", "-y"}, "--subagent requires a subagent name"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +169,7 @@ func TestParseUsageErrors(t *testing.T) {
 func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	help := Help()
 	for _, want := range []string{
-		"claude-code", "opencode", "--copy", "--list",
+		"claude-code", "opencode", "--copy", "--list", "--json", "--subagent",
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
 	} {
 		if !strings.Contains(help, want) {

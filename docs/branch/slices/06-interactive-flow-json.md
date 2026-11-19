@@ -1,5 +1,7 @@
 # Interactive flow and JSON contract
 
+- Status: Done
+
 - Intents: 20261119-interactive-install-flow
 - ADRs: 20261119-tui-architecture, 20261119-upstream-defect-corrections
 

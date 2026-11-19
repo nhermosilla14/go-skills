@@ -34,8 +34,8 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | Path | Responsibility | State |
 |---|---|---|
 | `cmd/skills` | Entry point: dispatch, user-facing errors, exit codes, build metadata. | delivered |
-| `internal/cli` | Argument parser, help, output rendering. TUI and `--json` are planned. | partial |
-| `internal/app` | Use cases (`Add`); source resolution; no command syntax. | partial |
+| `internal/cli` | Argument parser, help, JSON document, human rendering; `internal/cli/tui` holds the Bubble Tea flow. | delivered |
+| `internal/app` | Use cases (`Add`), prompt questions and the `Prompter` seam; no command syntax. | partial |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
 | `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
 | `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |
@@ -50,8 +50,9 @@ metadata injected through `-ldflags`; CI runs tests on Linux, macOS and Windows,
 cross-compiles every target. The Taskfile wraps the same commands.
 
 The clock seam is `app.Env.Now`, the process seam is `source.Runner` (git/`gh` execution), and the
+prompt seam is `app.Prompter` (real TUI, scripted answers for tests, no-prompt refusal). The
 filesystem is real (temporary directories) rather than virtual. `cmd/skills` wires the production
-implementations. TUI packages and the global lock do not exist yet.
+implementations and owns the process streams. The global lock does not exist yet.
 
 Interfaces are defined when the first slice needs them, not up front. Network, git and clock
 access sit behind small interfaces so tests run offline.

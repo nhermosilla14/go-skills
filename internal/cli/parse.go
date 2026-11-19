@@ -112,11 +112,11 @@ func (p *addParser) addSource(arg string) error {
 func (p *addParser) long(args []string, i int) (int, error) {
 	name, value, hasValue := strings.Cut(args[i][2:], "=")
 	switch name {
-	case "agent", "skill":
+	case "agent", "skill", "subagent":
 		return p.repeatable(args, i, name, value, hasValue)
 	case "rename":
 		return p.value(args, i, name, value, hasValue)
-	case "copy", "yes", "list", "global", "help", "all", "full-depth":
+	case "copy", "yes", "list", "global", "help", "all", "full-depth", "json":
 		if hasValue {
 			return i, usagef("--%s does not take a value", name)
 		}
@@ -164,15 +164,21 @@ func (p *addParser) repeatable(args []string, i int, name, inline string, hasInl
 	}
 	if len(values) == 0 || (hasInline && inline == "") {
 		noun := "an agent name"
-		if name == "skill" {
+		switch name {
+		case "skill":
 			noun = "a skill name"
+		case "subagent":
+			noun = "a subagent name"
 		}
 		return i, usagef("--%s requires %s", name, noun)
 	}
-	if name == "agent" {
+	switch name {
+	case "agent":
 		p.opts.Agents = append(p.opts.Agents, values...)
-	} else {
+	case "skill":
 		p.opts.Skills = append(p.opts.Skills, values...)
+	case "subagent":
+		p.opts.Subagents = append(p.opts.Subagents, values...)
 	}
 	return last, nil
 }
@@ -209,5 +215,7 @@ func (p *addParser) boolean(name string) {
 		p.all = true
 	case "full-depth":
 		p.opts.FullDepth = true
+	case "json":
+		p.opts.JSON = true
 	}
 }

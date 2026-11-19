@@ -59,11 +59,8 @@ type PlanOptions struct {
 func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts PlanOptions) []Entry {
 	env := opts.Env
 	env.Cwd = projectDir
-	derivedCopy := distinctDirs(selected) <= 1 || allEve(selected)
-	mode := ModeSymlink
-	if opts.ForceCopy || derivedCopy {
-		mode = ModeCopy
-	}
+	derivedCopy := derivedCopyMode(selected)
+	mode := ResolveMode(selected, opts.ForceCopy)
 	entries := make([]Entry, 0, len(skills))
 	for _, s := range skills {
 		name := skill.SanitizeName(s.Name)
@@ -86,6 +83,20 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries
+}
+
+// ResolveMode reports how a run installs: copy when forced, when the selected agents share at
+// most one project skills directory, or when every target is Eve; symlink otherwise.
+func ResolveMode(selected []agents.Agent, forceCopy bool) Mode {
+	if forceCopy || derivedCopyMode(selected) {
+		return ModeCopy
+	}
+	return ModeSymlink
+}
+
+// derivedCopyMode reports whether the selected agents make copy the only sensible mode.
+func derivedCopyMode(selected []agents.Agent) bool {
+	return distinctDirs(selected) <= 1 || allEve(selected)
 }
 
 // distinctDirs counts the project skills directories of the selected agents. It deliberately uses

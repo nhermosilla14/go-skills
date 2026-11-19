@@ -1,0 +1,6 @@
+Installation method
+--------------------------------------------------------------------------------
+> Symlink (Recommended)  Single source of truth, easy updates
+  Copy to all agents  Independent copies for each agent
+--------------------------------------------------------------------------------
+k up | j down | enter confirm | esc cancel

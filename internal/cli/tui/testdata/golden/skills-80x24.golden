@@ -1,0 +1,14 @@
+Select skills to install
+--------------------------------------------------------------------------------
+  [ ] Select all
+alpha
+> [ ] alpha-skill  First skill of the alpha plugin
+  [ ] beta-skill  Second skill of the alpha plugin
+General
+  [ ] general-skill  Ungrouped skill in the General group
+--------------------------------------------------------------------------------
+alpha-skill
+skills/alpha/SKILL.md
+First skill of the alpha plugin
+--------------------------------------------------------------------------------
+select at least one; k up | j down | space toggle | a all | enter confirm | e...

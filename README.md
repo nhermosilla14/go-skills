@@ -56,6 +56,12 @@ Current, working subset:
 ./skills add vercel-labs/agent-skills --list
 ./skills add vercel-labs/agent-skills@v1.2.3 --skill web-design -a opencode -y
 ./skills add https://gitlab.com/group/repo -a claude-code -y
+
+# Interactive: choose skills, agents, scope and install method with the keyboard.
+./skills add vercel-labs/agent-skills
+
+# Machine-readable: one JSON array on stdout, human output on stderr.
+./skills add vercel-labs/agent-skills -a opencode -y --json
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -72,7 +78,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills for any of the 79 agents from a local directory, with selection, rename and discovery flags. Remote sources, prompts and `--json` are `TODO`. | Partial |
+| `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial |
 | `list` | List installed skills and compare them with the project lock file. | `TODO` |
 | `remove` | Remove installed skills and their lock entries. | `TODO` |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |
@@ -82,6 +88,11 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | `init` | Create a new `SKILL.md` skeleton. | `TODO` |
 | `install` | With a source, same as `add`; without one, restore from `skills-lock.json`. | `TODO` |
 | `experimental_install`, `experimental_sync` | Upstream experimental commands. `experimental_install` restores from the lock file; `experimental_sync` (the `node_modules`/workspace sync) is out of scope and will stay as a clear "not supported" stub. | `TODO` |
+
+Interactive runs use a keyboard-driven flow: grouped skill selection with descriptions and a
+detail pane, agent selection, install method and confirmation. `--json` requires `-y` (or `--all`)
+and writes exactly one JSON array to stdout; every human message goes to stderr. Cancelling
+installs nothing.
 
 There is no telemetry and there will not be any.
 

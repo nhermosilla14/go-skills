@@ -1,0 +1,6 @@
+Installation scope
+------------------------------------------------------------------------------------------------------------------------
+> Project  Install in current directory (committed with your project)
+  Global  Install in home directory (available across all projects)
+------------------------------------------------------------------------------------------------------------------------
+k up | j down | enter confirm | esc cancel
