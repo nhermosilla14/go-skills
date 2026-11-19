@@ -53,6 +53,9 @@ Current, working subset:
 
 ```sh
 ./skills add ./path/to/skills -a opencode -a claude-code -y
+./skills add vercel-labs/agent-skills --list
+./skills add vercel-labs/agent-skills@v1.2.3 --skill web-design -a opencode -y
+./skills add https://gitlab.com/group/repo -a claude-code -y
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -151,6 +154,8 @@ go test ./...
 go vet ./...
 gofmt -l .        # must print nothing; `go tool gofmt -l .` if gofmt is not on PATH
 ```
+
+Network tests are opt-in: `SKILLS_E2E_NETWORK=1 go test ./e2e`. Everything else runs offline.
 
 `golangci-lint` v2 is the linter. The Taskfile wraps the common cases: `task build`, `task test`,
 `task lint`, `task fmt`, `task vet`, `task cross`, `task smoke`, `task release:snapshot`,

@@ -12,6 +12,8 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/install"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
+	"github.com/nhermosilla14/go-skills/internal/skill"
+	"github.com/nhermosilla14/go-skills/internal/source"
 )
 
 func newSource(t *testing.T) string {
@@ -330,6 +332,66 @@ func TestAddSelectsByNormalizedName(t *testing.T) {
 	}
 }
 
+func TestAddRetriesDiscoveryWithFullDepthForAMissingSkill(t *testing.T) {
+	src := t.TempDir()
+	writeSourceFile(t, src, "SKILL.md", "---\nname: root\ndescription: d\n---\n")
+	writeSourceFile(t, src, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: d\n---\n")
+
+	project := t.TempDir()
+	rep, err := Add(AddOptions{
+		Source: src, Agents: []string{"opencode"}, Skills: []string{"alpha"}, Yes: true,
+	}, testEnv(project))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Skill != "alpha" {
+		t.Errorf("results = %+v, want the skill found by the full-depth retry", rep.Results)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "skills", "alpha", "SKILL.md")); err != nil {
+		t.Errorf("retried skill was not installed: %v", err)
+	}
+}
+
+func TestLockEntryForRemoteSource(t *testing.T) {
+	in := recordInput{
+		project: "/p",
+		source: source.Source{
+			Kind:      source.KindGitHub,
+			Source:    "owner/repo",
+			SourceURL: "https://github.com/owner/repo.git",
+			Ref:       "v1",
+		},
+		commit: "0123456789abcdef0123456789abcdef01234567",
+	}
+	entry := lockEntry(in, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
+
+	if entry.Source != "owner/repo" {
+		t.Errorf("source = %q, want owner/repo", entry.Source)
+	}
+	// Upstream omits sourceUrl for GitHub sources: owner/repo re-derives the clone URL.
+	if entry.SourceURL != "" {
+		t.Errorf("sourceUrl = %q, want omitted for a GitHub source", entry.SourceURL)
+	}
+	if entry.SourceType != "github" || entry.Ref != "v1" || entry.Commit != in.commit {
+		t.Errorf("entry = %+v", entry)
+	}
+	if entry.SkillPath != "skills/x/SKILL.md" {
+		t.Errorf("skillPath = %q, want the source-relative SKILL.md", entry.SkillPath)
+	}
+	if entry.SkillName != "" || entry.InstallMode != "" {
+		t.Errorf("unexpected optionals: %+v", entry)
+	}
+}
+
+func TestLockSourceTypeMapsAzureToGit(t *testing.T) {
+	if got := lockSourceType(source.KindAzure); got != "git" {
+		t.Errorf("lockSourceType(azure) = %q, want git", got)
+	}
+	if got := lockSourceType(source.KindGitLab); got != "gitlab" {
+		t.Errorf("lockSourceType(gitlab) = %q", got)
+	}
+}
+
 func writeSourceFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -338,5 +400,21 @@ func writeSourceFile(t *testing.T, root, rel, content string) {
 	}
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLockEntryRecordsSourceURLForGenericGit(t *testing.T) {
+	in := recordInput{
+		project: "/p",
+		source: source.Source{
+			Kind:      source.KindGit,
+			Source:    "file:///srv/repo",
+			SourceURL: "file:///srv/repo",
+		},
+		commit: "0123456789abcdef0123456789abcdef01234567",
+	}
+	entry := lockEntry(in, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
+	if entry.SourceType != "git" || entry.SourceURL != "file:///srv/repo" {
+		t.Errorf("sourceType = %q, sourceUrl = %q", entry.SourceType, entry.SourceURL)
 	}
 }

@@ -156,7 +156,10 @@ func TestParseUsageErrors(t *testing.T) {
 
 func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	help := Help()
-	for _, want := range []string{"claude-code", "opencode", "--copy", "--list"} {
+	for _, want := range []string{
+		"claude-code", "opencode", "--copy", "--list",
+		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
+	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)
 		}

@@ -42,15 +42,16 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | `internal/lockfile` | Project lock v2, atomic write, unknown-field preservation. Global lock is planned. | partial |
 | `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
 | `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
-| `internal/source` | Source grammar, fetches, authentication. | planned |
+| `internal/source` | Source grammar, git acquisition, authentication ladder, temporary workspaces. | delivered |
 | `e2e/` | Built-binary tests with their fixtures. | partial |
 
 Build and release: GoReleaser cross-compiles the eight targets from one commit with version
 metadata injected through `-ldflags`; CI runs tests on Linux, macOS and Windows, lints, and
 cross-compiles every target. The Taskfile wraps the same commands.
 
-The clock seam is `app.Env.Now`; no package calls `time.Now` directly except `cmd/skills`, which
-wires the real clock. `internal/source`, TUI packages and the global lock do not exist yet.
+The clock seam is `app.Env.Now`, the process seam is `source.Runner` (git/`gh` execution), and the
+filesystem is real (temporary directories) rather than virtual. `cmd/skills` wires the production
+implementations. TUI packages and the global lock do not exist yet.
 
 Interfaces are defined when the first slice needs them, not up front. Network, git and clock
 access sit behind small interfaces so tests run offline.

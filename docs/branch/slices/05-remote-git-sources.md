@@ -1,5 +1,7 @@
 # Remote git sources and authentication
 
+- Status: Done
+
 - Intents: 20261119-remote-git-sources
 - ADRs: 20261119-source-acquisition-clone-first, 20261119-package-architecture-and-dependencies
 

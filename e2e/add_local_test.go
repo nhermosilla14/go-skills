@@ -84,7 +84,10 @@ type lockDoc struct {
 
 type lockEntry struct {
 	Source       string `json:"source"`
+	SourceURL    string `json:"sourceUrl"`
 	SourceType   string `json:"sourceType"`
+	Ref          string `json:"ref"`
+	Commit       string `json:"commit"`
 	SkillPath    string `json:"skillPath"`
 	SkillName    string `json:"skillName"`
 	ComputedHash string `json:"computedHash"`

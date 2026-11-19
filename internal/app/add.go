@@ -3,9 +3,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/install"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
 	"github.com/nhermosilla14/go-skills/internal/skill"
+	"github.com/nhermosilla14/go-skills/internal/source"
 )
 
 // ErrUsage marks a request that cannot be honoured because of how it was invoked. The CLI maps it
@@ -64,28 +67,37 @@ func (r Report) Failed() bool {
 	return false
 }
 
-// Add installs the skills of a local source into the project. The flow is: validate agents,
-// resolve the source, discover, stop for --list, require -y, select, plan, apply, record.
+// Add installs the skills of a source into the project. The flow is: validate agents, parse and
+// acquire the source, discover, stop for --list, require -y, select, plan, apply, record.
 func Add(opts AddOptions, env Env) (Report, error) {
 	agentEnv := env.agentsEnv()
 	selected, err := selectAgents(opts.Agents, agentEnv, opts.Yes)
 	if err != nil {
 		return Report{}, err
 	}
-	src, err := sourceDir(env.WorkDir, opts.Source)
+	src, err := source.Parse(opts.Source)
 	if err != nil {
 		return Report{}, err
 	}
-	found, err := skill.Discover(src, skill.Options{
-		IncludeInternal: env.IncludeInternal,
-		FullDepth:       opts.FullDepth,
-	})
+	tmp := ""
+	if src.Kind != source.KindLocal {
+		tmp, err = os.MkdirTemp("", "skills-*")
+		if err != nil {
+			return Report{}, fmt.Errorf("creating a temporary directory: %w", err)
+		}
+		defer os.RemoveAll(tmp)
+	}
+	tree, err := source.Acquire(context.Background(), src, tmp)
+	if err != nil {
+		return Report{}, err
+	}
+	found, err := discover(tree.Dir, src, env.IncludeInternal, opts.FullDepth)
 	if err != nil {
 		return Report{}, err
 	}
 	rep := Report{Warnings: found.Warnings}
 	if len(found.Skills) == 0 {
-		return rep, fmt.Errorf("no valid skills found in %s", src)
+		return rep, noSkillsError(src, tree)
 	}
 	if opts.List {
 		rep.Listed = found.Skills
@@ -94,7 +106,18 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	if !opts.Yes {
 		return rep, promptRequired(env.IsTTY)
 	}
-	chosen, err := selectSkills(found.Skills, opts.Skills)
+	requested := requestedSkills(opts.Skills, src.SkillSelector)
+	chosen, err := selectSkills(found.Skills, requested)
+	if err != nil && !opts.FullDepth {
+		// A requested skill may sit below discovery's normal depth, so retry once, as upstream does.
+		deeper, deeperErr := discover(tree.Dir, src, env.IncludeInternal, true)
+		if deeperErr == nil {
+			if deeperChosen, selectErr := selectSkills(deeper.Skills, requested); selectErr == nil {
+				found, chosen, err = deeper, deeperChosen, nil
+				rep.Warnings = found.Warnings
+			}
+		}
+	}
 	if err != nil {
 		return rep, err
 	}
@@ -115,6 +138,8 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	saved, err := recordInstalled(lock, lockPath, recordInput{
 		project: env.WorkDir,
 		source:  src,
+		root:    tree.Dir,
+		commit:  tree.Commit,
 		entries: entries,
 		results: rep.Results,
 	})
@@ -125,6 +150,38 @@ func Add(opts AddOptions, env Env) (Report, error) {
 		rep.LockPath = lockPath
 	}
 	return rep, nil
+}
+
+// discover finds the skills of an acquired tree. Remote subpaths are folded into each skill's
+// relative directory so the skill path is relative to the source root, as the lock records it.
+func discover(root string, src source.Source, includeInternal, fullDepth bool) (skill.Result, error) {
+	res, err := skill.Discover(root, skill.Options{IncludeInternal: includeInternal, FullDepth: fullDepth})
+	if err != nil {
+		return skill.Result{}, err
+	}
+	if src.Subpath != "" {
+		for i := range res.Skills {
+			res.Skills[i].RelDir = path.Join(src.Subpath, res.Skills[i].RelDir)
+		}
+	}
+	return res, nil
+}
+
+// noSkillsError names the source as the user wrote it, without the temporary checkout path.
+func noSkillsError(src source.Source, tree source.Tree) error {
+	if src.Kind == source.KindLocal {
+		return fmt.Errorf("no valid skills found in %s", tree.Dir)
+	}
+	return fmt.Errorf("no valid skills found in %s", src.Source)
+}
+
+// requestedSkills merges the --skill names with the skill named by the source's "@name" suffix.
+func requestedSkills(names []string, selector string) []string {
+	out := append([]string(nil), names...)
+	if selector != "" {
+		out = append(out, selector)
+	}
+	return out
 }
 
 // selectAgents resolves the requested agent identifiers. No identifiers uses detection when
@@ -153,22 +210,6 @@ func (e Env) agentsEnv() agents.Environment {
 		env.Cwd = e.WorkDir
 	}
 	return env
-}
-
-// sourceDir resolves a source argument to an absolute directory.
-func sourceDir(workDir, source string) (string, error) {
-	p := source
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(workDir, p)
-	}
-	info, err := os.Stat(p)
-	if err != nil {
-		return "", fmt.Errorf("source not found: %s", source)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("source is not a directory: %s", source)
-	}
-	return filepath.Clean(p), nil
 }
 
 func promptRequired(isTTY bool) error {
@@ -214,7 +255,9 @@ func validateRename(name string, chosen []skill.Skill) error {
 
 type recordInput struct {
 	project string
-	source  string
+	source  source.Source
+	root    string
+	commit  string
 	entries []install.Entry
 	results []install.Result
 }
@@ -247,10 +290,21 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 // lockEntry builds the lock record for one installed skill. installedAt keeps the value of an
 // earlier install of the same name.
 func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
-	entry := lockfile.Entry{
-		Source:       localSource(in.project, in.source),
-		SourceType:   "local",
-		ComputedHash: digest,
+	entry := lockfile.Entry{ComputedHash: digest}
+	if in.source.Kind == source.KindLocal {
+		entry.Source = localSource(in.project, in.root)
+		entry.SourceType = string(source.KindLocal)
+	} else {
+		entry.Source = in.source.Source
+		entry.SourceType = lockSourceType(in.source.Kind)
+		// Upstream records the fetch URL for generic git and GitLab sources, and omits it for
+		// GitHub, whose shorthand source is enough to re-derive the clone URL.
+		if in.source.SourceURL != "" && in.source.Kind != source.KindGitHub {
+			entry.SourceURL = in.source.SourceURL
+		}
+		entry.Ref = in.source.Ref
+		entry.Commit = in.commit
+		entry.SkillPath = e.Skill.SkillPath()
 	}
 	if e.RenameTo != "" && e.RenameTo != e.Skill.Name {
 		entry.SkillName = e.Skill.Name
@@ -259,6 +313,15 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 		entry.InstallMode = "copy"
 	}
 	return entry
+}
+
+// lockSourceType maps a source kind to the lock vocabulary. Azure repositories are recorded as
+// "git", the only spelling the lock schema defines for them.
+func lockSourceType(kind source.Kind) string {
+	if kind == source.KindAzure {
+		return string(source.KindGit)
+	}
+	return string(kind)
 }
 
 // hashInstalled hashes the installed skill: a directory normally, and the flat markdown file Eve

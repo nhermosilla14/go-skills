@@ -40,6 +40,7 @@ Correct these behaviours. Everything not listed keeps upstream semantics.
 | 19 | Non-UTF-8 terminals | Unicode glyphs are always emitted | ASCII glyph fallback when the locale is not UTF-8 | Legacy Windows consoles |
 | 20 | `CI` environment | Forces color on | Color follows TTY and `NO_COLOR` even in CI | Ansible-style logs and log files should stay clean |
 | 21 | Install order | Follows toggle order in the selector | Skill order, then registry order | Deterministic output and lock write order |
+| 23 | Owner/repo ending in `.git` | Appending a clone suffix again produces `repo.git.git` | A single `.git` suffix is kept | The generated URL must resolve |
 | 22 | Project lock writes | Unknown top-level and per-entry fields are dropped | Preserved on rewrite | Forward compatibility; upstream already preserves them for the global lock |
 
 Not corrected, kept for compatibility, and therefore documented in the spec: OpenClaw's legacy
