@@ -48,11 +48,18 @@ Current, working subset:
 ```sh
 ./skills add ./path/to/skills -a opencode -a claude-code -y
 ./skills add ./path/to/skills --list
+./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
+./skills add ./path/to/skills --all
 ```
+
+`add` discovers skills at the source root, in `skills/` (including `.curated`, `.experimental`,
+`.system`), in agent skill directories, in containers declared by `skills.sh.json`, and in Claude
+plugin manifests, down to three directory levels; a valid root `SKILL.md` makes the repository a
+single skill, and `--full-depth` searches the whole tree to five levels.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills from a local directory. Remote sources, prompts and `--json` are `TODO`. | Partial |
+| `add` | Install skills from a local directory, with selection, rename and discovery flags. Remote sources, prompts and `--json` are `TODO`. | Partial |
 | `list` | List installed skills and compare them with the project lock file. | `TODO` |
 | `remove` | Remove installed skills and their lock entries. | `TODO` |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |

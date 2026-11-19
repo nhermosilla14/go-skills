@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -76,6 +77,7 @@ type lockEntry struct {
 	Source       string `json:"source"`
 	SourceType   string `json:"sourceType"`
 	SkillPath    string `json:"skillPath"`
+	SkillName    string `json:"skillName"`
 	ComputedHash string `json:"computedHash"`
 }
 
@@ -233,5 +235,194 @@ func TestE2EAddRootSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(canonical, "hidden-skill")); !os.IsNotExist(err) {
 		t.Errorf("hidden-skill was installed despite the root SKILL.md shadowing it")
+	}
+}
+
+func TestE2EDiscoveryMatrix(t *testing.T) {
+	project := t.TempDir()
+	source, err := filepath.Abs("testdata/matrix")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run(t, project, "add", source, "-a", "opencode", "-a", "claude-code", "-y")
+	if res.exit != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "warning: skipped skills/shadow/SKILL.md") {
+		t.Errorf("stderr misses the shadowed-skill warning:\n%s", res.stderr)
+	}
+	for _, hidden := range []string{"matrix-inner", "matrix-hidden", "matrix-too-deep"} {
+		if strings.Contains(res.stderr, hidden) {
+			t.Errorf("stderr mentions %s:\n%s", hidden, res.stderr)
+		}
+	}
+
+	entries, err := os.ReadDir(filepath.Join(project, ".agents", "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed []string
+	for _, e := range entries {
+		installed = append(installed, e.Name())
+	}
+	want := []string{"agent-skill", "config-skill", "matrix-cat", "matrix-flat", "matrix-nested", "plugin-one", "plugin-two"}
+	if !reflect.DeepEqual(installed, want) {
+		t.Errorf("installed = %v, want %v", installed, want)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(project, "skills-lock.json"))
+	if err != nil {
+		t.Fatalf("lock missing: %v", err)
+	}
+	var lock lockDoc
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		t.Fatalf("lock is not JSON: %v", err)
+	}
+	if len(lock.Skills) != len(want) {
+		t.Errorf("lock skills = %d, want %d", len(lock.Skills), len(want))
+	}
+	for _, name := range want {
+		if _, ok := lock.Skills[name]; !ok {
+			t.Errorf("lock has no %s entry", name)
+		}
+	}
+}
+
+func TestE2ERename(t *testing.T) {
+	project := t.TempDir()
+	source, err := filepath.Abs("testdata/rename-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(source, "skills", "alpha", "SKILL.md")
+	before, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run(t, project, "add", source, "-a", "opencode", "-a", "claude-code", "-y", "--rename", "alpha-skill")
+	if res.exit != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+
+	installed := filepath.Join(project, ".agents", "skills", "alpha-skill", "SKILL.md")
+	got, err := os.ReadFile(installed)
+	if err != nil {
+		t.Fatalf("installed SKILL.md missing: %v", err)
+	}
+	if !strings.HasPrefix(string(got), "\uFEFF---\r\nname: alpha-skill\r\n") {
+		t.Errorf("installed frontmatter = %q, want the rewritten name with BOM and CRLF", got)
+	}
+	for _, keep := range []string{"description: alpha skill\r\n", "license: MIT\r\n", "  internal: false\r\n"} {
+		if !strings.Contains(string(got), keep) {
+			t.Errorf("installed frontmatter lost %q:\n%s", keep, got)
+		}
+	}
+	if strings.Contains(string(got), "Alpha Skill") {
+		t.Errorf("installed frontmatter kept the upstream name:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "skills", "alpha")); !os.IsNotExist(err) {
+		t.Errorf("upstream folder name was installed: %v", err)
+	}
+
+	after, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("the source SKILL.md was modified")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(project, "skills-lock.json"))
+	if err != nil {
+		t.Fatalf("lock missing: %v", err)
+	}
+	var lock lockDoc
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		t.Fatalf("lock is not JSON: %v", err)
+	}
+	entry, ok := lock.Skills["alpha-skill"]
+	if !ok {
+		t.Fatalf("lock has no alpha-skill entry: %+v", lock.Skills)
+	}
+	if entry.SkillName != "Alpha Skill" {
+		t.Errorf("skillName = %q, want the upstream name", entry.SkillName)
+	}
+}
+
+func TestE2EListIgnoresRename(t *testing.T) {
+	project := t.TempDir()
+	source, err := filepath.Abs("testdata/rename-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run(t, project, "add", source, "--list", "--rename", "Not Safe")
+	if res.exit != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "Alpha Skill\t") {
+		t.Errorf("list output = %q, want the upstream name", res.stdout)
+	}
+	if _, err := os.Stat(filepath.Join(project, "skills-lock.json")); !os.IsNotExist(err) {
+		t.Errorf("--list wrote a lock: %v", err)
+	}
+}
+
+func TestE2EFullDepth(t *testing.T) {
+	project := t.TempDir()
+	source, err := filepath.Abs("testdata/root-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := run(t, project, "add", source, "--full-depth", "-a", "opencode", "-a", "claude-code", "-y")
+	if res.exit != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(project, ".agents", "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed []string
+	for _, e := range entries {
+		installed = append(installed, e.Name())
+	}
+	want := []string{"hidden-skill", "root-skill"}
+	if !reflect.DeepEqual(installed, want) {
+		t.Errorf("installed = %v, want %v", installed, want)
+	}
+}
+
+func TestE2ERenameRejected(t *testing.T) {
+	project := t.TempDir()
+	one, err := filepath.Abs("testdata/rename-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	many, err := filepath.Abs("testdata/matrix")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unsafe name", []string{"add", one, "-y", "--rename", "Bad Name"}, "--rename must be a skill name"},
+		{"several skills", []string{"add", many, "-y", "--rename", "renamed"}, "installs one skill under a new name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := run(t, project, tc.args...)
+			if res.exit != 1 {
+				t.Fatalf("exit = %d, want 1\nstderr:\n%s", res.exit, res.stderr)
+			}
+			if !strings.Contains(res.stderr, tc.want) {
+				t.Errorf("stderr = %q, want containing %q", res.stderr, tc.want)
+			}
+		})
 	}
 }

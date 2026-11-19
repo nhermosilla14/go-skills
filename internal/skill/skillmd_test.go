@@ -136,11 +136,11 @@ func TestDiscoverLayoutsAndWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	want := []string{"flat-skill", "nested-skill"}
+	want := []string{"nested-skill", "flat-skill"}
 	if got := names(res.Skills); !reflect.DeepEqual(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
-	if got := res.Skills[1].SkillPath(); got != "skills/cat/nested/SKILL.md" {
+	if got := res.Skills[0].SkillPath(); got != "skills/cat/nested/SKILL.md" {
 		t.Errorf("SkillPath = %q", got)
 	}
 	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "skills/broken/SKILL.md") {
@@ -182,17 +182,17 @@ func TestDiscoverMalformedRootKeepsScanning(t *testing.T) {
 	}
 }
 
-func TestDiscoverShallowerShadowsDeeper(t *testing.T) {
+func TestDiscoverFirstSortedSkillWins(t *testing.T) {
 	root := t.TempDir()
-	// "a" sorts before "flat", so only the depth pass keeps the shallow skill.
+	// Discovery is depth-first in sorted order, so skills/a/dup is found before skills/flat.
 	writeFile(t, root, "skills/a/dup/SKILL.md", skillMD("dup"))
 	writeFile(t, root, "skills/flat/SKILL.md", skillMD("dup"))
 	res, err := Discover(root, Options{})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if got := res.Skills[0].RelDir; got != "skills/flat" {
-		t.Errorf("winner RelDir = %q, want skills/flat", got)
+	if got := res.Skills[0].RelDir; got != "skills/a/dup" {
+		t.Errorf("winner RelDir = %q, want skills/a/dup", got)
 	}
 	if len(res.Skills) != 1 {
 		t.Errorf("skills = %d, want 1", len(res.Skills))

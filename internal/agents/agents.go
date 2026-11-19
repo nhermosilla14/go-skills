@@ -1,6 +1,8 @@
 // Package agents holds the registry of coding agents and where each one reads project skills.
 package agents
 
+import "sort"
+
 // Agent is a coding agent that reads skills from a directory.
 type Agent struct {
 	ID         string // identifier used on the command line
@@ -51,6 +53,23 @@ func IDs() []string {
 		ids = append(ids, a.ID)
 	}
 	return ids
+}
+
+// ProjectSkillDirs returns the project directories agents read skills from, sorted and
+// deduplicated. The bare "skills" directory is excluded because discovery walks it as its own
+// container.
+func ProjectSkillDirs() []string {
+	seen := map[string]bool{}
+	var dirs []string
+	for _, a := range registry {
+		if a.ProjectDir == "skills" || seen[a.ProjectDir] {
+			continue
+		}
+		seen[a.ProjectDir] = true
+		dirs = append(dirs, a.ProjectDir)
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 func lookup(id string) (Agent, bool) {

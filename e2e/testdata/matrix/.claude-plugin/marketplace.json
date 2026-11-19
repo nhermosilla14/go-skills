@@ -1,0 +1,1 @@
+{"metadata": {"pluginRoot": "./plugins"}, "plugins": [{"name": "Pack", "source": "./pack", "skills": ["./custom/one"]}]}

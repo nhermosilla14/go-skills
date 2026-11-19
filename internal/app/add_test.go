@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +148,106 @@ func TestAddRecordsInstallModeOnlyWhenCopyIsForced(t *testing.T) {
 	}
 	if e, _ := lock.Get("flat"); e.InstallMode != "" {
 		t.Errorf("installMode = %q, want omitted when copy is the default", e.InstallMode)
+	}
+}
+
+func TestAddRenameRewritesInstalledName(t *testing.T) {
+	src := t.TempDir()
+	writeSourceFile(t, src, "skills/alpha/SKILL.md", "---\nname: Alpha Skill\ndescription: d\n---\nbody\n")
+	before, err := os.ReadFile(filepath.Join(src, "skills/alpha/SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project := t.TempDir()
+	rep, err := Add(AddOptions{
+		Source: src, Agents: []string{"claude-code"}, Yes: true, Rename: "alpha-new",
+	}, testEnv(project))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if rep.Failed() {
+		t.Fatalf("results failed: %+v", rep.Results)
+	}
+	installed, err := os.ReadFile(filepath.Join(project, ".claude", "skills", "alpha-new", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("installed SKILL.md: %v", err)
+	}
+	if want := "---\nname: alpha-new\ndescription: d\n---\nbody\n"; string(installed) != want {
+		t.Errorf("installed = %q, want %q", installed, want)
+	}
+	after, err := os.ReadFile(filepath.Join(src, "skills/alpha/SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("the source SKILL.md was modified")
+	}
+	lock, err := lockfile.Load(filepath.Join(project, lockfile.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lock.Get("alpha-new")
+	if !ok {
+		t.Fatalf("lock has no alpha-new entry: %+v", lock.Skills)
+	}
+	if entry.SkillName != "Alpha Skill" {
+		t.Errorf("skillName = %q, want the upstream name", entry.SkillName)
+	}
+}
+
+func TestAddRenameRestrictions(t *testing.T) {
+	one := t.TempDir()
+	writeSourceFile(t, one, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: d\n---\n")
+	two := t.TempDir()
+	writeSourceFile(t, two, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: d\n---\n")
+	writeSourceFile(t, two, "skills/beta/SKILL.md", "---\nname: beta\ndescription: d\n---\n")
+
+	tests := []struct {
+		name   string
+		source string
+		rename string
+		want   string
+	}{
+		{"several skills", two, "renamed", "installs one skill under a new name"},
+		{"unsafe name", one, "Bad Name", "--rename must be a skill name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Add(AddOptions{
+				Source: tc.source, Agents: []string{"claude-code"}, Yes: true, Rename: tc.rename,
+			}, testEnv(t.TempDir()))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAddSelectsByNormalizedName(t *testing.T) {
+	src := t.TempDir()
+	writeSourceFile(t, src, "skills/conv/SKILL.md", "---\nname: Convex Best Practices\ndescription: d\n---\n")
+	writeSourceFile(t, src, "skills/other/SKILL.md", "---\nname: Other\ndescription: d\n---\n")
+
+	project := t.TempDir()
+	rep, err := Add(AddOptions{
+		Source: src, Agents: []string{"opencode"}, Skills: []string{"convex-best-practices"}, Yes: true,
+	}, testEnv(project))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Skill != "convex-best-practices" {
+		t.Errorf("results = %+v, want only the normalized match", rep.Results)
+	}
+}
+
+func writeSourceFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

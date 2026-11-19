@@ -1,5 +1,7 @@
 # Discovery depth, selection and rename
 
+- Status: Done
+
 - Intents: 20261119-cli-foundation-and-local-install
 - ADRs: 20261119-upstream-defect-corrections, 20261119-install-plan-and-filesystem-model
 

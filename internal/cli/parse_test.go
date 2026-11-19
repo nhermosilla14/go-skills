@@ -87,6 +87,21 @@ func TestParseAddOptions(t *testing.T) {
 			args: []string{"add", "./x", "-a", "*", "-s", "*"},
 			want: app.AddOptions{Source: "./x", Agents: []string{"*"}, Skills: []string{"*"}},
 		},
+		{
+			name: "full depth",
+			args: []string{"add", "./x", "--full-depth"},
+			want: app.AddOptions{Source: "./x", FullDepth: true},
+		},
+		{
+			name: "all overrides explicit selections",
+			args: []string{"add", "./x", "--all", "-s", "one", "-a", "opencode"},
+			want: app.AddOptions{Source: "./x", Agents: []string{"*"}, Skills: []string{"*"}, Yes: true},
+		},
+		{
+			name: "rename last occurrence wins",
+			args: []string{"add", "./x", "--rename", "first", "--rename=second"},
+			want: app.AddOptions{Source: "./x", Rename: "second"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +136,9 @@ func TestParseUsageErrors(t *testing.T) {
 		{"skill equals empty", []string{"add", "./x", "--skill="}, "--skill requires a skill name"},
 		{"boolean with value", []string{"add", "./x", "--copy=1"}, "--copy does not take a value"},
 		{"short list not last", []string{"add", "./x", "-as", "x"}, "-a takes a value and must be last"},
+		{"rename without value", []string{"add", "./x", "--rename"}, "--rename requires a skill name"},
+		{"rename with empty value", []string{"add", "./x", "--rename="}, "--rename requires a skill name"},
+		{"full depth with value", []string{"add", "./x", "--full-depth=1"}, "--full-depth does not take a value"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

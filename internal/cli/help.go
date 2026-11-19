@@ -21,7 +21,10 @@ Add options:
                            Known agents: %s
   -s, --skill <name...>    Skills to install (default: all). Use '*' for all.
   -y, --yes                Install without prompting (required for now)
+      --all                Every skill for every agent, without prompting
       --copy               Copy skills instead of linking them
+      --rename <name>      Install one selected skill under a new name
+      --full-depth         Search all subdirectories, even under a root SKILL.md
   -l, --list               List the skills in the source and exit
   -h, --help               Show this help
 

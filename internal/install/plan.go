@@ -32,10 +32,14 @@ type Target struct {
 // Entry is the plan for one skill.
 type Entry struct {
 	Skill     skill.Skill
-	Name      string // installed name: the sanitized skill name
+	Name      string // installed name: the sanitized skill name or the --rename value
 	Canonical string // absolute canonical copy; empty in copy mode
 	Mode      Mode
 	Targets   []Target
+
+	// RenameTo is the value written into the installed SKILL.md name field. It is empty unless
+	// --rename was used.
+	RenameTo string
 
 	// ForcedCopy is set when --copy overrode what would otherwise have been symlink mode. Only
 	// then does upstream record installMode in the lock.
@@ -43,9 +47,10 @@ type Entry struct {
 }
 
 // Plan decides, without touching the disk, where each skill goes. Copy mode is used when forceCopy
-// is set or when the selected agents share at most one project skills directory. Entries are
-// sorted by installed name.
-func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, forceCopy bool) []Entry {
+// is set or when the selected agents share at most one project skills directory. A non-empty rename
+// installs every skill under that name, which the caller restricts to one skill. Entries are sorted
+// by installed name.
+func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, forceCopy bool, rename string) []Entry {
 	derivedCopy := distinctDirs(selected) <= 1
 	mode := ModeSymlink
 	if forceCopy || derivedCopy {
@@ -54,7 +59,10 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, forc
 	entries := make([]Entry, 0, len(skills))
 	for _, s := range skills {
 		name := skill.SanitizeName(s.Name)
-		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: forceCopy && !derivedCopy}
+		if rename != "" {
+			name = rename
+		}
+		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: forceCopy && !derivedCopy, RenameTo: rename}
 		if mode == ModeSymlink {
 			e.Canonical = filepath.Join(projectDir, filepath.FromSlash(canonicalDir), name)
 		}

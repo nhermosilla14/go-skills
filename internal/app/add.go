@@ -27,12 +27,14 @@ var ErrPromptRequired = errors.New("prompt required")
 
 // AddOptions are the inputs of the add use case, as parsed from the command line.
 type AddOptions struct {
-	Source string   // local directory containing skills
-	Agents []string // agent identifiers, or "*"; empty selects every agent
-	Skills []string // skill names, or "*"; empty selects every skill
-	Yes    bool     // proceed without prompting
-	Copy   bool     // copy instead of linking
-	List   bool     // list the skills and install nothing
+	Source    string   // local directory containing skills
+	Agents    []string // agent identifiers, or "*"; empty selects every agent
+	Skills    []string // skill names, or "*"; empty selects every skill
+	Yes       bool     // proceed without prompting
+	Copy      bool     // copy instead of linking
+	List      bool     // list the skills and install nothing
+	FullDepth bool     // search every subdirectory, even below a root SKILL.md
+	Rename    string   // install one skill under this name
 }
 
 // Env carries what the use case needs from the process. Now must not be nil.
@@ -72,7 +74,10 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	found, err := skill.Discover(src, skill.Options{IncludeInternal: env.IncludeInternal})
+	found, err := skill.Discover(src, skill.Options{
+		IncludeInternal: env.IncludeInternal,
+		FullDepth:       opts.FullDepth,
+	})
 	if err != nil {
 		return Report{}, err
 	}
@@ -91,12 +96,15 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	if err := validateRename(opts.Rename, chosen); err != nil {
+		return rep, err
+	}
 	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
 	lock, err := lockfile.Load(lockPath)
 	if err != nil {
 		return rep, err
 	}
-	entries := install.Plan(env.WorkDir, chosen, selected, opts.Copy)
+	entries := install.Plan(env.WorkDir, chosen, selected, opts.Copy, opts.Rename)
 	rep.Results = install.Apply(env.WorkDir, entries)
 	saved, err := recordInstalled(lock, lockPath, recordInput{
 		project: env.WorkDir,
@@ -159,22 +167,28 @@ func selectSkills(all []skill.Skill, names []string) ([]skill.Skill, error) {
 		if name == "*" {
 			return all, nil
 		}
-		s, ok := findSkill(all, name)
-		if !ok {
+		matches := skill.Filter(all, name)
+		if len(matches) == 0 {
 			return nil, fmt.Errorf("no skill named %q in source", name)
 		}
-		chosen = append(chosen, s)
+		chosen = append(chosen, matches...)
 	}
 	return chosen, nil
 }
 
-func findSkill(all []skill.Skill, name string) (skill.Skill, bool) {
-	for _, s := range all {
-		if s.Name == name || skill.SanitizeName(s.Name) == name {
-			return s, true
-		}
+// validateRename checks the --rename restrictions: the name must already be sanitized and exactly
+// one skill must be selected.
+func validateRename(name string, chosen []skill.Skill) error {
+	if name == "" {
+		return nil
 	}
-	return skill.Skill{}, false
+	if skill.SanitizeName(name) != name {
+		return fmt.Errorf("--rename must be a skill name of lowercase letters, digits, \".\", \"_\" and \"-\"")
+	}
+	if len(chosen) != 1 {
+		return fmt.Errorf("--rename installs one skill under a new name, but %d skills were selected", len(chosen))
+	}
+	return nil
 }
 
 type recordInput struct {
@@ -216,6 +230,9 @@ func lockEntry(in recordInput, e install.Entry, digest string, lock *lockfile.Fi
 		Source:       localSource(in.project, in.source),
 		SourceType:   "local",
 		ComputedHash: digest,
+	}
+	if e.RenameTo != "" && e.RenameTo != e.Skill.Name {
+		entry.SkillName = e.Skill.Name
 	}
 	if e.ForcedCopy {
 		entry.InstallMode = "copy"

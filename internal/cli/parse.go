@@ -50,6 +50,7 @@ type addParser struct {
 	opts   app.AddOptions
 	help   bool
 	global bool
+	all    bool
 }
 
 // shortNames maps the single-letter switches of add to their long names.
@@ -82,6 +83,11 @@ func parseAdd(name string, args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
+	if p.all {
+		p.opts.Skills = []string{"*"}
+		p.opts.Agents = []string{"*"}
+		p.opts.Yes = true
+	}
 	if p.global {
 		return Command{}, usagef("global scope is not supported yet")
 	}
@@ -108,7 +114,9 @@ func (p *addParser) long(args []string, i int) (int, error) {
 	switch name {
 	case "agent", "skill":
 		return p.repeatable(args, i, name, value, hasValue)
-	case "copy", "yes", "list", "global", "help":
+	case "rename":
+		return p.value(args, i, name, value, hasValue)
+	case "copy", "yes", "list", "global", "help", "all", "full-depth":
 		if hasValue {
 			return i, usagef("--%s does not take a value", name)
 		}
@@ -169,6 +177,22 @@ func (p *addParser) repeatable(args []string, i int, name, inline string, hasInl
 	return last, nil
 }
 
+// value reads the single value of --rename. The last occurrence wins.
+func (p *addParser) value(args []string, i int, name, inline string, hasInline bool) (int, error) {
+	if hasInline {
+		if inline == "" {
+			return i, usagef("--%s requires a skill name", name)
+		}
+		p.opts.Rename = inline
+		return i, nil
+	}
+	if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+		return i, usagef("--%s requires a skill name", name)
+	}
+	p.opts.Rename = args[i+1]
+	return i + 1, nil
+}
+
 func (p *addParser) boolean(name string) {
 	switch name {
 	case "copy":
@@ -181,5 +205,9 @@ func (p *addParser) boolean(name string) {
 		p.global = true
 	case "help":
 		p.help = true
+	case "all":
+		p.all = true
+	case "full-depth":
+		p.opts.FullDepth = true
 	}
 }

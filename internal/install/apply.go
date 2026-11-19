@@ -53,6 +53,12 @@ func applySymlinkEntry(projectDir string, e Entry) []Result {
 		}
 		return results
 	}
+	if err := renameInstalled(e.RenameTo, e.Canonical); err != nil {
+		for _, t := range e.Targets {
+			results = append(results, failure(newResult(e, t, ModeSymlink), err))
+		}
+		return results
+	}
 	for _, t := range e.Targets {
 		results = append(results, linkTarget(projectDir, e, t))
 	}
@@ -76,6 +82,9 @@ func failure(res Result, err error) Result {
 func copyTarget(projectDir string, e Entry, t Target) Result {
 	res := newResult(e, t, ModeCopy)
 	if err := replaceDir(projectDir, e.Skill.Dir, t.Path); err != nil {
+		return failure(res, err)
+	}
+	if err := renameInstalled(e.RenameTo, t.Path); err != nil {
 		return failure(res, err)
 	}
 	res.Status = Installed
@@ -131,7 +140,10 @@ func linkOrCopy(projectDir string, e Entry, t Target, res *Result) error {
 		res.Message = "symlinks are not used on Windows; copied instead"
 	}
 	res.Mode = ModeCopy
-	return replaceDir(projectDir, e.Skill.Dir, t.Path)
+	if err := replaceDir(projectDir, e.Skill.Dir, t.Path); err != nil {
+		return err
+	}
+	return renameInstalled(e.RenameTo, t.Path)
 }
 
 // createRelativeLink links link to target with a path relative to the link's real parent, so the
