@@ -35,14 +35,14 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 |---|---|---|
 | `cmd/skills` | Entry point: dispatch, user-facing errors, exit codes, build metadata. | delivered |
 | `internal/cli` | Argument parser, help, JSON document, human rendering; `internal/cli/tui` holds the Bubble Tea flow. | delivered |
-| `internal/app` | Use cases (`Add`), prompt questions and the `Prompter` seam; no command syntax. | partial |
+| `internal/app` | Use cases (`Add`, `List`, `Check`), prompt questions and the `Prompter` seam; no command syntax. | partial |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
 | `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
 | `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |
 | `internal/lockfile` | Project lock v2, atomic write, unknown-field preservation. Global lock is planned. | partial |
 | `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
 | `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
-| `internal/source` | Source grammar, git acquisition, authentication ladder, temporary workspaces. | delivered |
+| `internal/source` | Source grammar, git acquisition and remote ref lookup, authentication ladder, temporary workspaces. | delivered |
 | `e2e/` | Built-binary tests with their fixtures. | partial |
 
 Build and release: GoReleaser cross-compiles the eight targets from one commit with version

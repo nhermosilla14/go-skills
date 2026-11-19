@@ -135,7 +135,7 @@ func TestParseUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"unknown command", []string{"list"}, "unknown command 'list'"},
+		{"unknown command", []string{"frobnicate"}, "unknown command 'frobnicate'"},
 		{"unknown long flag", []string{"add", "./x", "--force"}, "unknown option '--force'"},
 		{"unknown short flag", []string{"add", "./x", "-q"}, "unknown option '-q'"},
 		{"extra source", []string{"add", "./a", "./b"}, "unexpected argument './b'"},
@@ -151,6 +151,74 @@ func TestParseUsageErrors(t *testing.T) {
 		{"full depth with value", []string{"add", "./x", "--full-depth=1"}, "--full-depth does not take a value"},
 		{"json with value", []string{"add", "./x", "--json=1"}, "--json does not take a value"},
 		{"subagent without value", []string{"add", "./x", "--subagent", "-y"}, "--subagent requires a subagent name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.args)
+			var usage *UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("err = %v, want UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseListAndCheck(t *testing.T) {
+	cmd, err := Parse([]string{"list", "-a", "claude-code", "opencode", "--json"})
+	if err != nil {
+		t.Fatalf("Parse list: %v", err)
+	}
+	if cmd.Kind != KindList {
+		t.Fatalf("Kind = %v, want KindList", cmd.Kind)
+	}
+	if !reflect.DeepEqual(cmd.List.Agents, []string{"claude-code", "opencode"}) || !cmd.JSON {
+		t.Errorf("list = %+v, json = %v", cmd.List, cmd.JSON)
+	}
+
+	cmd, err = Parse([]string{"ls", "--agent=*", "-a", "codex"})
+	if err != nil {
+		t.Fatalf("Parse ls: %v", err)
+	}
+	if cmd.Kind != KindList || !reflect.DeepEqual(cmd.List.Agents, []string{"*", "codex"}) {
+		t.Errorf("ls = %+v", cmd.List)
+	}
+
+	cmd, err = Parse([]string{"check", "alpha", "--", "-beta"})
+	if err != nil {
+		t.Fatalf("Parse check: %v", err)
+	}
+	if cmd.Kind != KindCheck || !reflect.DeepEqual(cmd.Check.Skills, []string{"alpha", "-beta"}) {
+		t.Errorf("check = %+v", cmd.Check)
+	}
+
+	for _, args := range [][]string{{"list", "-h"}, {"check", "--help"}} {
+		cmd, err := Parse(args)
+		if err != nil {
+			t.Fatalf("Parse %v: %v", args, err)
+		}
+		if cmd.Kind != KindHelp {
+			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		}
+	}
+}
+
+func TestParseListAndCheckUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"list global", []string{"list", "-g"}, "global scope is not supported yet"},
+		{"check global", []string{"check", "--global"}, "global scope is not supported yet"},
+		{"list positional", []string{"list", "extra"}, "unexpected argument 'extra'"},
+		{"list unknown", []string{"list", "--force"}, "unknown option '--force'"},
+		{"list json value", []string{"list", "--json=1"}, "--json does not take a value"},
+		{"list agent without value", []string{"list", "-a"}, "--agent requires an agent name"},
+		{"check unknown", []string{"check", "--json"}, "unknown option '--json'"},
+		{"check global value", []string{"check", "--global=1"}, "--global does not take a value"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

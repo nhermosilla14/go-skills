@@ -13,6 +13,8 @@ func Help() string {
 
 Commands:
   add <source>      Install the skills found in a source
+  list, ls          List installed project skills and their lock status
+  check [skill...]  Report available updates and local changes, without writing
   help              Show this help
   version           Show version, commit and build date
 
@@ -48,7 +50,17 @@ Add options:
   -l, --list               List the skills in the source and exit
   -h, --help               Show this help
 
-Output: progress, prompts and results go to stderr; --json and --list write to stdout.
-Exit codes: 0 success, 1 failure, 2 usage error.
+List options:
+  -a, --agent <agent...>   Only these agents (default: all). Use '*' for all.
+      --json               Print one JSON array on stdout
+  -h, --help               Show this help
+
+Check options:
+  check [skill...]         Limit the check to the named skills
+  -h, --help               Show this help
+
+Output: progress, prompts and results go to stderr; --json, --list, list and check
+reports go to stdout.
+Exit codes: 0 success, 1 failure or a check finding, 2 usage error.
 `, strings.Join(agents.IDs(), ", "))
 }

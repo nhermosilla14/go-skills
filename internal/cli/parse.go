@@ -13,12 +13,17 @@ const (
 	KindHelp Kind = iota
 	KindVersion
 	KindAdd
+	KindList
+	KindCheck
 )
 
 // Command is a parsed command line.
 type Command struct {
-	Kind Kind
-	Add  app.AddOptions // set when Kind is KindAdd
+	Kind  Kind
+	Add   app.AddOptions   // set when Kind is KindAdd
+	List  app.ListOptions  // set when Kind is KindList
+	Check app.CheckOptions // set when Kind is KindCheck
+	JSON  bool             // --json, for list
 }
 
 // addNames are the spellings of the add command. install and i are add with a source.
@@ -38,6 +43,10 @@ func Parse(args []string) (Command, error) {
 		return Command{Kind: KindVersion}, nil
 	case addNames[name]:
 		return parseAdd(name, args[1:])
+	case name == "list" || name == "ls":
+		return parseList(args[1:])
+	case name == "check":
+		return parseCheck(args[1:])
 	case strings.HasPrefix(name, "-"):
 		return Command{}, usagef("unknown option '%s'", name)
 	default:
@@ -149,19 +158,24 @@ func (p *addParser) short(args []string, i int) (int, error) {
 	return i, nil
 }
 
-// repeatable reads the values of -a/--agent or -s/--skill. A value given with "=" is the only
-// one; otherwise the values are the following arguments up to the next option. Values accumulate.
-func (p *addParser) repeatable(args []string, i int, name, inline string, hasInline bool) (int, error) {
+// collectValues reads the values of a repeatable option. A value given with "=" is the only one;
+// otherwise the values are the following arguments up to the next option.
+func collectValues(args []string, i int, inline string, hasInline bool) ([]string, int) {
+	if hasInline {
+		return []string{inline}, i
+	}
 	var values []string
 	last := i
-	if hasInline {
-		values = []string{inline}
-	} else {
-		for last+1 < len(args) && !strings.HasPrefix(args[last+1], "-") {
-			last++
-			values = append(values, args[last])
-		}
+	for last+1 < len(args) && !strings.HasPrefix(args[last+1], "-") {
+		last++
+		values = append(values, args[last])
 	}
+	return values, last
+}
+
+// repeatable reads the values of -a/--agent or -s/--skill. Values accumulate.
+func (p *addParser) repeatable(args []string, i int, name, inline string, hasInline bool) (int, error) {
+	values, last := collectValues(args, i, inline, hasInline)
 	if len(values) == 0 || (hasInline && inline == "") {
 		noun := "an agent name"
 		switch name {
@@ -218,4 +232,166 @@ func (p *addParser) boolean(name string) {
 	case "json":
 		p.opts.JSON = true
 	}
+}
+
+// listParser accumulates the options of list.
+type listParser struct {
+	opts   app.ListOptions
+	json   bool
+	global bool
+	help   bool
+}
+
+// parseList parses `list` / `ls`: repeated --agent values, --json, and the rejected --global.
+func parseList(args []string) (Command, error) {
+	p := &listParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var err error
+		switch {
+		case arg == "--":
+			for _, rest := range args[i+1:] {
+				if err = p.unexpected(rest); err != nil {
+					break
+				}
+			}
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			i, err = p.long(args, i)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			i, err = p.short(args, i)
+		default:
+			err = p.unexpected(arg)
+		}
+		if err != nil {
+			return Command{}, err
+		}
+	}
+	if p.help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if p.global {
+		return Command{}, usagef("global scope is not supported yet")
+	}
+	return Command{Kind: KindList, List: p.opts, JSON: p.json}, nil
+}
+
+func (p *listParser) long(args []string, i int) (int, error) {
+	name, value, hasValue := strings.Cut(args[i][2:], "=")
+	switch name {
+	case "agent":
+		return p.agent(args, i, value, hasValue)
+	case "json", "global", "help":
+		if hasValue {
+			return i, usagef("--%s does not take a value", name)
+		}
+		switch name {
+		case "json":
+			p.json = true
+		case "global":
+			p.global = true
+		case "help":
+			p.help = true
+		}
+		return i, nil
+	}
+	return i, usagef("unknown option '--%s'", name)
+}
+
+func (p *listParser) short(args []string, i int) (int, error) {
+	group, value, hasValue := strings.Cut(args[i][1:], "=")
+	for k := 0; k < len(group); k++ {
+		letter := group[k]
+		switch letter {
+		case 'a':
+			if k != len(group)-1 {
+				return i, usagef("-a takes a value and must be last in its group")
+			}
+			return p.agent(args, i, value, hasValue)
+		case 'g', 'h':
+			if hasValue && k == len(group)-1 {
+				return i, usagef("-%c does not take a value", letter)
+			}
+			if letter == 'g' {
+				p.global = true
+			} else {
+				p.help = true
+			}
+		default:
+			return i, usagef("unknown option '-%c'", letter)
+		}
+	}
+	return i, nil
+}
+
+func (p *listParser) agent(args []string, i int, value string, hasValue bool) (int, error) {
+	values, last := collectValues(args, i, value, hasValue)
+	if len(values) == 0 || (hasValue && value == "") {
+		return i, usagef("--agent requires an agent name")
+	}
+	p.opts.Agents = append(p.opts.Agents, values...)
+	return last, nil
+}
+
+func (p *listParser) unexpected(arg string) error {
+	return usagef("unexpected argument '%s'", arg)
+}
+
+// checkParser accumulates the optional skill names of check.
+type checkParser struct {
+	opts   app.CheckOptions
+	global bool
+	help   bool
+}
+
+// parseCheck parses `check [skill...]`: positional skill names limit the check, --global is
+// rejected until global scope arrives.
+func parseCheck(args []string) (Command, error) {
+	p := &checkParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			p.opts.Skills = append(p.opts.Skills, args[i+1:]...)
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			name, _, hasValue := strings.Cut(arg[2:], "=")
+			if name != "global" && name != "help" {
+				return Command{}, usagef("unknown option '--%s'", name)
+			}
+			if hasValue {
+				return Command{}, usagef("--%s does not take a value", name)
+			}
+			if name == "global" {
+				p.global = true
+			} else {
+				p.help = true
+			}
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			group, _, hasValue := strings.Cut(arg[1:], "=")
+			for k := 0; k < len(group); k++ {
+				letter := group[k]
+				if letter != 'g' && letter != 'h' {
+					return Command{}, usagef("unknown option '-%c'", letter)
+				}
+				if hasValue && k == len(group)-1 {
+					return Command{}, usagef("-%c does not take a value", letter)
+				}
+				if letter == 'g' {
+					p.global = true
+				} else {
+					p.help = true
+				}
+			}
+		default:
+			p.opts.Skills = append(p.opts.Skills, arg)
+		}
+	}
+	if p.help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if p.global {
+		return Command{}, usagef("global scope is not supported yet")
+	}
+	return Command{Kind: KindCheck, Check: p.opts}, nil
 }

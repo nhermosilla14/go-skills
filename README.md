@@ -62,6 +62,11 @@ Current, working subset:
 
 # Machine-readable: one JSON array on stdout, human output on stderr.
 ./skills add vercel-labs/agent-skills -a opencode -y --json
+
+# Inspect what is installed, and check for drift or updates.
+./skills list
+./skills list --json
+./skills check
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -79,10 +84,10 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | Command | Purpose | Status |
 | --- | --- | --- |
 | `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial |
-| `list` | List installed skills and compare them with the project lock file. | `TODO` |
+| `list` | List installed skills and compare them with the project lock file. | Project scope |
 | `remove` | Remove installed skills and their lock entries. | `TODO` |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |
-| `check` | Report whether tracked skills are outdated without changing anything. | `TODO` |
+| `check` | Report whether tracked skills are outdated without changing anything. | Project scope |
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | `TODO` |
 | `find` | Search skill catalogs. | `TODO` |
 | `init` | Create a new `SKILL.md` skeleton. | `TODO` |

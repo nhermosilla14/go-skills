@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case cli.KindVersion:
 		fmt.Fprintf(stdout, "skills %s (commit %s, built %s)\n", version, commit, date)
 		return exitOK
+	case cli.KindList:
+		return runList(cmd, stdout, stderr)
+	case cli.KindCheck:
+		return runCheck(cmd.Check, stdout, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -72,19 +77,12 @@ func runAdd(opts app.AddOptions, stdout, stderr io.Writer) (code int) {
 		fmt.Fprintf(stderr, "error: %s\n", cli.Message(err))
 		return exitFailure
 	}
-	workDir, err := os.Getwd()
+	env, err := projectEnv()
 	if err != nil {
 		document = cli.JSONFailure(err)
 		return reportError(stderr, err)
 	}
-	interactive := canPrompt()
-	env := app.Env{
-		WorkDir:         workDir,
-		IsTTY:           interactive,
-		IncludeInternal: internalSkillsEnabled(),
-		Now:             time.Now,
-		AgentEnv:        agents.FromOS(workDir),
-	}
+	interactive := env.IsTTY
 	var prompter app.Prompter = app.NoPrompts{}
 	if interactive && !opts.JSON {
 		prompter = tui.New(os.Stdin, stderr, tui.Options{Color: colorEnabled(), ASCII: !utf8Locale()})
@@ -131,6 +129,69 @@ func reportError(stderr io.Writer, err error) int {
 		return exitUsage
 	}
 	return exitFailure
+}
+
+// runList runs `list`, which is the product of the command: the human report or the JSON document
+// goes to stdout and everything else to stderr.
+func runList(cmd cli.Command, stdout, stderr io.Writer) (code int) {
+	var document []cli.ListEntry
+	if cmd.JSON {
+		defer func() {
+			if err := cli.WriteListJSON(stdout, document); err != nil {
+				fmt.Fprintf(stderr, "error: %v\n", err)
+				code = exitFailure
+			}
+		}()
+	}
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	rep, err := app.List(cmd.List, env)
+	for _, warning := range rep.Warnings {
+		fmt.Fprintf(stderr, "warning: %s\n", warning)
+	}
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	if cmd.JSON {
+		document = cli.ListJSON(rep)
+		return exitOK
+	}
+	cli.WriteList(stdout, rep)
+	return exitOK
+}
+
+// runCheck runs `check`, reporting findings on stdout and exiting non-zero when there are any.
+func runCheck(opts app.CheckOptions, stdout, stderr io.Writer) int {
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	rep, err := app.Check(context.Background(), opts, env)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	cli.WriteCheck(stdout, rep)
+	if rep.Failed() {
+		return exitFailure
+	}
+	return exitOK
+}
+
+// projectEnv builds the use-case environment from the process.
+func projectEnv() (app.Env, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return app.Env{}, err
+	}
+	return app.Env{
+		WorkDir:         workDir,
+		IsTTY:           canPrompt(),
+		IncludeInternal: internalSkillsEnabled(),
+		Now:             time.Now,
+		AgentEnv:        agents.FromOS(workDir),
+	}, nil
 }
 
 // canPrompt reports whether an interactive flow may run: stdin must be a terminal and TERM must
