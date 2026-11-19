@@ -121,7 +121,7 @@ func TestPlanStepsMatchesThePromptMatrix(t *testing.T) {
 		{
 			name:   "explicit --agent skips Eve and the agent picker",
 			opts:   AddOptions{Agents: []string{"cursor"}},
-			facts:  withEve(withRequested(oneSkill(), "alpha")),
+			facts:  withEveDetected(withRequested(oneSkill(), "alpha")),
 			expect: []StepID{StepScope, StepMethod, StepConfirm},
 		},
 		{
@@ -129,6 +129,18 @@ func TestPlanStepsMatchesThePromptMatrix(t *testing.T) {
 			opts:   AddOptions{},
 			facts:  eveFacts(),
 			expect: []StepID{StepEve, StepAgents, StepMethod, StepConfirm},
+		},
+		{
+			name:   "an Eve project with subagents asks the placement",
+			opts:   AddOptions{},
+			facts:  withSubagents(eveFacts(), "reviewer"),
+			expect: []StepID{StepEve, StepAgents, StepSubagents, StepMethod, StepConfirm},
+		},
+		{
+			name:   "--subagent skips the agent and placement prompts",
+			opts:   AddOptions{Subagents: []string{"root"}},
+			facts:  withSubagents(eveFacts(), "reviewer"),
+			expect: []StepID{StepMethod, StepConfirm},
 		},
 		{
 			name:   "nothing detected asks the agent picker",
@@ -186,13 +198,20 @@ func withRequested(f Facts, names ...string) Facts {
 	return f
 }
 
-func withEve(f Facts) Facts {
+func withEveDetected(f Facts) Facts {
 	f.EveDetected = true
 	return f
 }
 
 func withMode(f Facts, mode install.Mode) Facts {
 	f.Mode = mode
+	return f
+}
+
+// withSubagents marks the run as targeting Eve and discovers the given subagents.
+func withSubagents(f Facts, names ...string) Facts {
+	f.EveTargeted = true
+	f.Subagents = names
 	return f
 }
 

@@ -51,6 +51,9 @@ func (e Entry) members() []member {
 	add("skillPath", e.SkillPath, false)
 	add("computedHash", e.ComputedHash, true)
 	add("skillName", e.SkillName, false)
+	if len(e.Subagents) > 0 {
+		ms = append(ms, member{"subagents", array(e.Subagents)})
+	}
 	add("installMode", e.InstallMode, false)
 	for _, k := range sortedKeys(e.extra) {
 		ms = append(ms, member{k, string(e.extra[k])})
@@ -72,6 +75,15 @@ func object(ms []member) string {
 	}
 	b.WriteByte('}')
 	return b.String()
+}
+
+// array encodes a list of strings as one compact JSON array.
+func array(values []string) string {
+	items := make([]string, len(values))
+	for i, v := range values {
+		items[i] = quote(v)
+	}
+	return "[" + strings.Join(items, ",") + "]"
 }
 
 // quote encodes a string as a JSON string, escaping the same characters as JSON.stringify: no

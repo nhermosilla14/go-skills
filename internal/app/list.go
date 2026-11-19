@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/nhermosilla14/go-skills/internal/agents"
-	"github.com/nhermosilla14/go-skills/internal/hash"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
 	"github.com/nhermosilla14/go-skills/internal/skill"
 )
@@ -37,8 +36,9 @@ type ListOptions struct {
 // SkillInfo is one skill of a list report, in the shape the CLI renders.
 type SkillInfo struct {
 	Name        string
-	Path        string // absolute skill directory; empty for a missing skill
+	Path        string // absolute skill directory or flat file; empty for a missing skill
 	Agents      []string
+	Subagents   []string // Eve placement: "" is the root agent
 	Source      string
 	SourceURL   string
 	SourceType  string
@@ -319,14 +319,21 @@ func eveAgent(selected []agents.Agent, filtered bool) *agents.Agent {
 	return nil
 }
 
-// readInstalledSkill reports the metadata of dir when it is a directory holding a parseable,
-// non-internal (unless allowed) SKILL.md.
-func readInstalledSkill(dir string, includeInternal bool) (skill.Meta, bool) {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
+// readInstalledSkill reports the metadata of an installed skill when it is a directory holding a
+// parseable SKILL.md, or Eve's flat <name>.md file, and is not internal unless allowed.
+func readInstalledSkill(path string, includeInternal bool) (skill.Meta, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
 		return skill.Meta{}, false
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	file := filepath.Join(path, "SKILL.md")
+	if !info.IsDir() {
+		if !strings.HasSuffix(info.Name(), ".md") {
+			return skill.Meta{}, false
+		}
+		file = path
+	}
+	raw, err := os.ReadFile(file)
 	if err != nil {
 		return skill.Meta{}, false
 	}
@@ -343,9 +350,10 @@ func readInstalledSkill(dir string, includeInternal bool) (skill.Meta, bool) {
 // comparedSkill is an installed skill paired with the lock entry that describes it.
 type comparedSkill struct {
 	installedSkill
-	Status  Status
-	LockKey string // empty when the skill is untracked
-	Ref     lockRef
+	Status    Status
+	LockKey   string   // empty when the skill is untracked
+	Subagents []string // Eve placement recorded in the lock
+	Ref       lockRef
 }
 
 // compareLock pairs installed project skills with lock entries and lists the keys with no folder.
@@ -358,6 +366,7 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 		if ok {
 			used[key] = true
 			c.Status = compareHash(s.Dir, entry)
+			c.Subagents = entry.Subagents
 			c.Ref = lockRef{
 				Source:     entry.Source,
 				SourceURL:  entry.SourceURL,
@@ -369,6 +378,7 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 		}
 		matched = append(matched, c)
 	}
+	matched = mergeLockMatches(matched)
 	var missing []missingSkill
 	for _, key := range lockKeys(lock) {
 		if used[key] {
@@ -381,6 +391,27 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 		}})
 	}
 	return matched, missing
+}
+
+// mergeLockMatches collapses the copies of one tracked skill into a single row: an Eve install
+// writes the same skill as the root flat file and once per subagent, and the user sees one skill.
+// The first copy (the root agent when it exists) supplies the path and status.
+func mergeLockMatches(matched []comparedSkill) []comparedSkill {
+	index := map[string]int{}
+	out := make([]comparedSkill, 0, len(matched))
+	for _, c := range matched {
+		if c.LockKey == "" {
+			out = append(out, c)
+			continue
+		}
+		if i, ok := index[c.LockKey]; ok {
+			out[i].Agents = mergeAgents(out[i].Agents, c.Agents)
+			continue
+		}
+		index[c.LockKey] = len(out)
+		out = append(out, c)
+	}
+	return out
 }
 
 // compareGlobalLock pairs installed global skills with global lock entries and lists the keys with
@@ -475,12 +506,13 @@ func lookupEntry(lock *lockfile.File, names ...string) (string, lockfile.Entry, 
 }
 
 // compareHash reports whether the on-disk skill still matches its lock entry. A hash that cannot be
-// computed and an entry without a hash are both treated as modified.
-func compareHash(dir string, entry lockfile.Entry) Status {
+// computed and an entry without a hash are both treated as modified. A flat file (Eve) is hashed
+// with the single-file framing its install used.
+func compareHash(path string, entry lockfile.Entry) Status {
 	if entry.ComputedHash == "" {
 		return StatusModified
 	}
-	digest, err := hash.Dir(dir)
+	digest, err := hashInstalled(path)
 	if err != nil || digest != entry.ComputedHash {
 		return StatusModified
 	}
@@ -493,6 +525,7 @@ func skillInfo(c comparedSkill) SkillInfo {
 		Name:        c.Name,
 		Path:        c.Path,
 		Agents:      displayNames(c.Agents),
+		Subagents:   c.Subagents,
 		Source:      c.Ref.Source,
 		SourceURL:   c.Ref.SourceURL,
 		SourceType:  c.Ref.SourceType,

@@ -250,6 +250,7 @@ type updateRecord struct {
 	Commit          string
 	SkillPath       string
 	SkillName       string
+	Subagents       []string // Eve placement: "" is the root agent
 	InstallMode     string
 	ComputedHash    string // project lock content hash
 	SkillFolderHash string // global lock folder hash
@@ -304,7 +305,7 @@ func (l *projectUpdateLock) entry(key string) (updateRecord, bool) {
 	return updateRecord{
 		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
 		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
-		InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+		Subagents: e.Subagents, InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
 	}, ok
 }
 
@@ -312,7 +313,7 @@ func (l *projectUpdateLock) put(key string, e updateRecord) {
 	l.lock.Put(key, lockfile.Entry{
 		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
 		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
-		InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+		Subagents: e.Subagents, InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
 	})
 }
 
@@ -562,7 +563,12 @@ func updateSkill(env Env, agentEnv agents.Environment, lock updateLock, t update
 		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false, ""
 	}
 	moved := normalizeSkillPath(found.SkillPath()) != normalizeSkillPath(t.entry.SkillPath)
-	if !moved && len(locations) > 0 && t.entry.recordedHash() != "" &&
+	if evePlaced(t.entry.Subagents) {
+		if !moved && eveCurrent(agentEnv, installed, t.entry.Subagents, found) {
+			return UpdateResult{Name: t.key, Status: UpdateCurrent},
+				backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
+		}
+	} else if !moved && len(locations) > 0 && t.entry.recordedHash() != "" &&
 		strings.EqualFold(upstream, t.entry.recordedHash()) {
 		return UpdateResult{Name: t.key, Status: UpdateCurrent},
 			backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
@@ -639,11 +645,14 @@ func reinstallSkill(env Env, agentEnv agents.Environment, lock updateLock, t upd
 	}
 	mode := updateInstallMode(t.entry, agentEnv, installed, locations, lock.global())
 	targets := locations
-	if len(targets) == 0 {
+	if evePlaced(t.entry.Subagents) {
+		targets = withEve(targets)
+	} else if len(targets) == 0 {
 		targets = universalTargets()
 	}
 	entries := install.Plan(env.WorkDir, []skill.Skill{found}, targets, install.PlanOptions{
 		Env: agentEnv, Mode: mode, Rename: rename, Global: lock.global(),
+		Subagents: t.entry.Subagents,
 	})
 	results := install.Apply(applyRoot(env, agentEnv, lock.global()), entries)
 	if message, failed := firstFailure(results); failed {

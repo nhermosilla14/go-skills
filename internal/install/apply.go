@@ -266,13 +266,9 @@ func writeFlatSkill(root string, e Entry, dst string) error {
 	if overlap {
 		return fmt.Errorf("%s: %w", dst, ErrOverlap)
 	}
-	raw, err := os.ReadFile(filepath.Join(e.Skill.Dir, "SKILL.md"))
+	out, err := FlatContent(e.Skill, e.RenameTo)
 	if err != nil {
 		return err
-	}
-	out := skill.ReduceFrontmatter(raw)
-	if e.RenameTo != "" {
-		out = skill.SetFrontmatterName(out, e.RenameTo)
 	}
 	if err := fsutil.EnsureDir(filepath.Dir(dst)); err != nil {
 		return err
@@ -281,6 +277,20 @@ func writeFlatSkill(root string, e Entry, dst string) error {
 		return err
 	}
 	return fsutil.WriteFileAtomic(dst, out, 0o644)
+}
+
+// FlatContent renders what Eve's flat file holds: the skill's SKILL.md with the frontmatter
+// reduced to the keys Eve keeps, and the installed name when --rename was used.
+func FlatContent(s skill.Skill, renameTo string) ([]byte, error) {
+	raw, err := os.ReadFile(filepath.Join(s.Dir, "SKILL.md"))
+	if err != nil {
+		return nil, err
+	}
+	out := skill.ReduceFrontmatter(raw)
+	if renameTo != "" {
+		out = skill.SetFrontmatterName(out, renameTo)
+	}
+	return out, nil
 }
 
 // samePlace reports whether two paths resolve to the same real location.

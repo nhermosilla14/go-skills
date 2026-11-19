@@ -32,6 +32,7 @@ type Entry struct {
 	SkillPath    string
 	ComputedHash string
 	SkillName    string
+	Subagents    []string // Eve placement: "" is the root agent
 	InstallMode  string
 
 	extra map[string]json.RawMessage
@@ -150,7 +151,7 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 
 var entryKeys = []string{
 	"source", "sourceUrl", "ref", "commit", "sourceType", "skillPath", "computedHash",
-	"skillName", "installMode", "installedAt", "updatedAt",
+	"skillName", "subagents", "installMode", "installedAt", "updatedAt",
 }
 
 // compactAll compacts the raw values so that rewriting them is stable, and returns nil for none.

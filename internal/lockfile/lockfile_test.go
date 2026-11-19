@@ -3,6 +3,7 @@ package lockfile
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -161,5 +162,73 @@ func TestProjectLockHasNoTimestamps(t *testing.T) {
 		if strings.Contains(string(data), key) {
 			t.Errorf("project lock contains %q; upstream v2 has no timestamps:\n%s", key, data)
 		}
+	}
+}
+
+func TestSubagentsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	f := New()
+	f.Put("alpha", Entry{
+		Source: "owner/repo", SourceType: "github", ComputedHash: "abc",
+		Subagents: []string{"", "reviewer"},
+	})
+	if err := f.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"subagents": [`) || !strings.Contains(string(raw), `"",`) {
+		t.Errorf("subagents field not written as an array:\n%s", raw)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	entry, ok := loaded.Get("alpha")
+	if !ok {
+		t.Fatal("alpha entry missing")
+	}
+	want := []string{"", "reviewer"}
+	if !reflect.DeepEqual(entry.Subagents, want) {
+		t.Errorf("Subagents = %v, want %v", entry.Subagents, want)
+	}
+}
+
+func TestSubagentsOmittedWhenEmpty(t *testing.T) {
+	f := New()
+	f.Put("alpha", Entry{Source: "s", SourceType: "local", ComputedHash: "h"})
+	data, err := f.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "subagents") {
+		t.Errorf("empty subagents field written:\n%s", data)
+	}
+}
+
+func TestSubagentsSurviveAnUnrelatedRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	in := `{"version":2,"skills":{"alpha":{"source":"s","sourceType":"local","computedHash":"h","subagents":["","reviewer"]}}}`
+	if err := os.WriteFile(path, []byte(in), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	entry, _ := f.Get("alpha")
+	entry.ComputedHash = "new"
+	f.Put("alpha", entry)
+	if err := f.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"subagents": [`) || !strings.Contains(string(raw), `"reviewer"`) {
+		t.Errorf("subagents field lost on rewrite:\n%s", raw)
 	}
 }

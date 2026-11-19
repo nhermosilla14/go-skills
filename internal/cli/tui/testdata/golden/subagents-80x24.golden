@@ -1,0 +1,7 @@
+Select Eve targets
+--------------------------------------------------------------------------------
+> [x] Root agent  agent/skills
+  [ ] reviewer  agent/subagents/reviewer/skills
+  [ ] writer  agent/subagents/writer/skills
+--------------------------------------------------------------------------------
+k up | j down | space toggle | a all | enter confirm | esc cancel

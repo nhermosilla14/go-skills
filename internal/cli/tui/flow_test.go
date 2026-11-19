@@ -326,3 +326,55 @@ func checkGolden(t *testing.T, name, got string) {
 		t.Errorf("view differs from %s:\n--- got ---\n%s\n--- want ---\n%s", path, got, normalized)
 	}
 }
+
+func TestFlowEveSubagentAnswers(t *testing.T) {
+	q := app.Questions{
+		Steps: []app.StepID{app.StepSubagents, app.StepConfirm},
+		Subagents: []app.SubagentChoice{
+			{Dir: "agent/skills"},
+			{Name: "reviewer", Dir: "agent/subagents/reviewer/skills"},
+		},
+		Defaults: app.Answers{Agents: []string{"eve"}, Subagents: []string{""}},
+	}
+	f := newFlow(q, newTheme(io.Discard, false, true))
+	f.resize(80, 24)
+	send(t, f, runeKey('a'), enter())
+	send(t, f, enter())
+	if !f.done || f.cancelled {
+		t.Fatalf("done = %v, cancelled = %v", f.done, f.cancelled)
+	}
+	if want := []string{"", "reviewer"}; strings.Join(f.answers.Subagents, ",") != strings.Join(want, ",") {
+		t.Fatalf("subagents = %v, want %v", f.answers.Subagents, want)
+	}
+}
+
+func TestFlowSkipsSubagentsWithoutEve(t *testing.T) {
+	q := app.Questions{
+		Steps:     []app.StepID{app.StepSubagents, app.StepConfirm},
+		Subagents: []app.SubagentChoice{{Dir: "agent/skills"}},
+		Defaults:  app.Answers{Agents: []string{"opencode"}},
+	}
+	f := newFlow(q, newTheme(io.Discard, false, true))
+	if f.steps[f.index] != app.StepConfirm {
+		t.Fatalf("first step = %v, want the confirmation", f.steps[f.index])
+	}
+}
+
+func TestGoldenSubagents(t *testing.T) {
+	q := app.Questions{
+		Steps: []app.StepID{app.StepSubagents},
+		Subagents: []app.SubagentChoice{
+			{Dir: "agent/skills"},
+			{Name: "reviewer", Dir: "agent/subagents/reviewer/skills"},
+			{Name: "writer", Dir: "agent/subagents/writer/skills"},
+		},
+		Defaults: app.Answers{Agents: []string{"eve"}, Subagents: []string{""}},
+	}
+	for _, width := range []int{40, 80, 120} {
+		t.Run(fmt.Sprintf("%d", width), func(t *testing.T) {
+			f := newFlow(q, newTheme(io.Discard, false, true))
+			f.resize(width, 24)
+			checkGolden(t, fmt.Sprintf("subagents-%dx24", width), f.View())
+		})
+	}
+}

@@ -85,6 +85,9 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		prompter = prompters[0]
 	}
 	agentEnv := env.agentsEnv()
+	if err := validateSubagentFlags(opts, agentEnv); err != nil {
+		return Report{}, err
+	}
 	explicit, err := selectAgents(opts.Agents, agentEnv, opts.Yes)
 	if err != nil {
 		return Report{}, err
@@ -144,6 +147,10 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	if len(opts.Subagents) > 0 {
+		selected = withEve(selected)
+	}
+	subagents := chosenSubagents(opts, questions, answers)
 	if hasStep(questions, StepConfirm) && !answers.Proceed {
 		return rep, ErrCancelled
 	}
@@ -172,6 +179,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		ForceCopy: opts.Copy || answers.Mode == install.ModeCopy,
 		Global:    global,
 		Rename:    opts.Rename,
+		Subagents: subagents,
 	})
 	rep.Results = install.Apply(scopeRoot, entries)
 	rep.Results = append(rep.Results, globalFailures(entries, failedAgents)...)
@@ -229,9 +237,69 @@ func questionsFor(opts AddOptions, src source.Source, skills []skill.Skill,
 		Candidates:      candidates,
 		All:             agents.All(),
 		EveDetected:     eve,
+		EveTargeted:     targetsEve(candidates),
+		Subagents:       agents.EveSubagents(agentEnv),
 		CanGoGlobal:     anyGlobalDir(candidates, agentEnv),
 		Mode:            install.ResolveMode(candidates, opts.Copy),
 	})
+}
+
+// targetsEve reports whether the selection installs for Eve.
+func targetsEve(selected []agents.Agent) bool {
+	for _, a := range selected {
+		if a.ID == "eve" {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSubagentFlags rejects --subagent where Eve cannot take it: with a global scope, which
+// Eve does not support, and outside an Eve project.
+func validateSubagentFlags(opts AddOptions, env agents.Environment) error {
+	if len(opts.Subagents) == 0 {
+		return nil
+	}
+	if opts.Global {
+		return fmt.Errorf("%w: --subagent cannot be combined with --global: Eve has no global skills directory", ErrUsage)
+	}
+	if !eveProject(env) {
+		return fmt.Errorf("%w: --subagent requires an Eve project (an agent directory and an eve dependency)", ErrUsage)
+	}
+	return nil
+}
+
+// eveProject reports whether the working directory is an Eve project.
+func eveProject(env agents.Environment) bool {
+	for _, a := range agents.Detect(env) {
+		if a.ID == "eve" {
+			return true
+		}
+	}
+	return false
+}
+
+// withEve adds Eve to a selection that does not have it, keeping the registry order.
+func withEve(selected []agents.Agent) []agents.Agent {
+	if targetsEve(selected) {
+		return selected
+	}
+	ids := make([]string, 0, len(selected)+1)
+	for _, a := range selected {
+		ids = append(ids, a.ID)
+	}
+	ids = append(ids, "eve")
+	expanded, _ := agents.Expand(ids)
+	return expanded
+}
+
+// chosenSubagents resolves the Eve placement: the selector answer when the step ran, the flag
+// values otherwise, and the root agent when neither applies. install.Plan normalizes it.
+func chosenSubagents(opts AddOptions, questions Questions, answers Answers) []string {
+	if hasStep(questions, StepSubagents) {
+		return answers.Subagents
+	}
+	return opts.Subagents
 }
 
 // ask runs the prompts the matrix calls for. No steps mean no prompter is needed; any failure to
@@ -637,6 +705,9 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 	}
 	if e.RenameTo != "" && e.RenameTo != e.Skill.Name {
 		entry.SkillName = e.Skill.Name
+	}
+	if len(e.Subagents) > 0 {
+		entry.Subagents = e.Subagents
 	}
 	if e.ForcedCopy {
 		entry.InstallMode = "copy"

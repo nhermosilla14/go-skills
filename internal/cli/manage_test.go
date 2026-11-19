@@ -186,3 +186,34 @@ func TestWriteCheck(t *testing.T) {
 		t.Errorf("check output carries escapes: %q", out.String())
 	}
 }
+
+func TestWriteListShowsTheEvePlacement(t *testing.T) {
+	rep := app.ListReport{Scope: "project", Skills: []app.SkillInfo{{
+		Name: "alpha", Path: "/p/agent/skills/alpha.md", Agents: []string{"Eve"},
+		Subagents: []string{"", "reviewer"}, Source: "owner/repo", Status: app.StatusTracked,
+	}}}
+	var out bytes.Buffer
+	WriteList(&out, rep)
+	if want := "Agents: Eve (root, reviewer)"; !strings.Contains(out.String(), want) {
+		t.Errorf("output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestListJSONCarriesTheEvePlacement(t *testing.T) {
+	rep := app.ListReport{Scope: "project", Skills: []app.SkillInfo{{
+		Name: "alpha", Path: "/p/agent/skills/alpha.md", Agents: []string{"Eve"},
+		Subagents: []string{"", "reviewer"}, Source: "owner/repo", Status: app.StatusTracked,
+	}}}
+	var out bytes.Buffer
+	if err := WriteListJSON(&out, ListJSON(rep)); err != nil {
+		t.Fatalf("WriteListJSON: %v", err)
+	}
+	var doc []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := doc[0]["subagents"].([]any)
+	if len(got) != 2 || got[0] != "" || got[1] != "reviewer" {
+		t.Errorf("subagents = %v, want the Eve placement", doc[0]["subagents"])
+	}
+}

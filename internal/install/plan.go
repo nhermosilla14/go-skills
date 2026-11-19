@@ -35,6 +35,10 @@ type Entry struct {
 	Mode      Mode
 	Targets   []Target
 
+	// Subagents is the Eve placement of the skill: "" for the root agent and one name per
+	// selected subagent. It is empty for every other agent and recorded in the project lock.
+	Subagents []string
+
 	// RenameTo is the value written into the installed SKILL.md name field. It is empty unless
 	// --rename was used.
 	RenameTo string
@@ -54,6 +58,10 @@ type PlanOptions struct {
 	Global    bool               // global scope; its lock and CLI wiring arrive later
 	Rename    string             // --rename value
 	Mode      Mode               // force symlink or copy; empty derives it from the agents
+
+	// Subagents is the Eve placement: "" for the root agent plus one name per selected
+	// subagent. Empty means the root agent only.
+	Subagents []string
 }
 
 // Plan decides, without touching the disk, where each skill goes. Copy mode is used when ForceCopy
@@ -68,6 +76,10 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts
 	if opts.Mode != "" {
 		mode = opts.Mode
 	}
+	var subagents []string
+	if selectedHasEve(selected) {
+		subagents = NormalizeSubagents(opts.Subagents)
+	}
 	entries := make([]Entry, 0, len(skills))
 	for _, s := range skills {
 		name := skill.SanitizeName(s.Name)
@@ -75,22 +87,73 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts
 			name = opts.Rename
 		}
 		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: opts.ForceCopy && !derivedCopy,
-			RenameTo: opts.Rename, Global: opts.Global}
+			RenameTo: opts.Rename, Global: opts.Global, Subagents: subagents}
 		if mode == ModeSymlink {
 			e.Canonical = filepath.Join(agents.CanonicalSkillsDir(env, opts.Global), name)
 		}
 		for _, a := range selected {
-			target := Target{Agent: a, Path: filepath.Join(a.BaseDir(env, opts.Global), name)}
 			if a.ID == "eve" {
-				target.Path = filepath.Join(a.BaseDir(env, opts.Global), name+".md")
-				target.Flat = true
+				e.Targets = append(e.Targets, eveTargets(env, a, name, opts.Global, subagents)...)
+				continue
 			}
-			e.Targets = append(e.Targets, target)
+			e.Targets = append(e.Targets,
+				Target{Agent: a, Path: filepath.Join(a.BaseDir(env, opts.Global), name)})
 		}
 		entries = append(entries, e)
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries
+}
+
+// NormalizeSubagents returns the Eve placement of a run: the root agent marker ("root", "." or
+// "") mixed with subagent names, deduplicated, with the root agent first. Empty means the root
+// agent only.
+func NormalizeSubagents(names []string) []string {
+	if len(names) == 0 {
+		return []string{rootSubagent}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "root" || name == "." {
+			name = rootSubagent
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// rootSubagent is the lock name of Eve's root agent: agent/skills.
+const rootSubagent = ""
+
+// eveTargets builds one flat file per selected subagent: the root agent at agent/skills and each
+// named subagent at agent/subagents/<sanitized>/skills.
+func eveTargets(env agents.Environment, a agents.Agent, name string, global bool, subagents []string) []Target {
+	targets := make([]Target, 0, len(subagents))
+	for _, sub := range subagents {
+		path := EveRootFile(env, a, name, global)
+		if sub != rootSubagent {
+			path = EveSubagentFile(env, sub, name)
+		}
+		targets = append(targets, Target{Agent: a, Path: path, Flat: true})
+	}
+	return targets
+}
+
+// EveRootFile is the flat file Eve's root agent reads.
+func EveRootFile(env agents.Environment, a agents.Agent, name string, global bool) string {
+	return filepath.Join(a.BaseDir(env, global), name+".md")
+}
+
+// EveSubagentFile is the flat file one Eve subagent reads. The name is sanitized into a single
+// path segment, so a hostile value cannot escape agent/subagents.
+func EveSubagentFile(env agents.Environment, subagent, name string) string {
+	return filepath.Join(env.Cwd, "agent", "subagents", skill.SanitizeName(subagent), "skills", name+".md")
 }
 
 // ResolveMode reports how a run installs: copy when forced, when the selected agents share at
@@ -127,4 +190,14 @@ func allEve(selected []agents.Agent) bool {
 		}
 	}
 	return true
+}
+
+// selectedHasEve reports whether the selection installs for Eve at all.
+func selectedHasEve(selected []agents.Agent) bool {
+	for _, a := range selected {
+		if a.ID == "eve" {
+			return true
+		}
+	}
+	return false
 }

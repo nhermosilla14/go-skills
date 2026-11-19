@@ -297,11 +297,14 @@ func (s *selector) selectedIDs() []string {
 }
 
 func (s *selector) apply(a *app.Answers) {
-	if s.step == app.StepAgents {
+	switch s.step {
+	case app.StepAgents:
 		a.Agents = s.selectedIDs()
-		return
+	case app.StepSubagents:
+		a.Subagents = s.selectedIDs()
+	default:
+		a.Skills = s.selectedIDs()
 	}
-	a.Skills = s.selectedIDs()
 }
 
 // detailShown reports whether the focused item has a pane to show.

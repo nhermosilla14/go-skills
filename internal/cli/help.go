@@ -56,7 +56,7 @@ Add options:
       --all                Every skill for every agent, without prompting
       --copy               Copy skills instead of linking them
       --json               Print one JSON array on stdout; requires -y or --all
-      --subagent <name...> Eve subagent targets; accepted, subagents install later
+      --subagent <name...> Eve targets: root, . or a subagent name; implies Eve
       --rename <name>      Install one selected skill under a new name
       --full-depth         Search all subdirectories, even under a root SKILL.md
   -l, --list               List the skills in the source and exit

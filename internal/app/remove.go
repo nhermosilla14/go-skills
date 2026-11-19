@@ -224,6 +224,18 @@ func (l removeLock) source(key string) (string, bool) {
 	return entry.Source, ok
 }
 
+// subagents returns the Eve placement recorded for a key. The global lock never records one.
+func (l removeLock) subagents(key string) []string {
+	if l.global != nil {
+		return nil
+	}
+	entry, ok := l.project.Get(key)
+	if !ok {
+		return nil
+	}
+	return entry.Subagents
+}
+
 // delete removes one key from the lock.
 func (l removeLock) delete(key string) {
 	if l.global != nil {
@@ -628,6 +640,9 @@ func executeRemove(agentEnv agents.Environment, lock removeLock,
 				a.BaseDir(agentEnv, global)))
 		}
 
+		report.Results = append(report.Results,
+			removeEveSubagents(agentEnv, lock, t, selected, explicitFilter)...)
+
 		canonicalPath := filepath.Join(canonicalDir, t.DirName)
 		canonicalExists := pathExistsForRemoval(canonicalPath)
 		switch {
@@ -667,6 +682,46 @@ func executeRemove(agentEnv agents.Environment, lock removeLock,
 		report.LockPath = lock.path
 	}
 	return report, nil
+}
+
+// removeEveSubagents deletes the Eve subagent files a lock entry records. The root agent file is
+// handled by the agent loop, and subagent copies the entry does not record are left alone.
+func removeEveSubagents(env agents.Environment, lock removeLock, t removeTarget,
+	selected []agents.Agent, explicitFilter bool) []RemoveResult {
+	if t.LockKey == "" || !targetsEve(selected) {
+		return nil
+	}
+	root := filepath.Join(env.Cwd, "agent", "subagents")
+	seen := map[string]bool{}
+	var results []RemoveResult
+	for _, sub := range lock.subagents(t.LockKey) {
+		if sub == "" {
+			continue
+		}
+		path := install.EveSubagentFile(env, sub, t.DirName)
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		if _, err := os.Lstat(path); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				if explicitFilter {
+					results = append(results, RemoveResult{
+						Skill: t.Name, Agent: "eve", Path: path,
+						Status: RemoveSkipped, Message: "not present",
+					})
+				}
+				continue
+			}
+			results = append(results, RemoveResult{
+				Skill: t.Name, Agent: "eve", Path: path,
+				Status: RemoveFailed, Message: err.Error(),
+			})
+			continue
+		}
+		results = append(results, removeAtResult(t, "eve", path, root))
+	}
+	return results
 }
 
 // sameDir reports whether two paths name the same directory without touching the filesystem.

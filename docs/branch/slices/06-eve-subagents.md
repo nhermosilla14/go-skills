@@ -1,5 +1,7 @@
 # Eve subagents
 
+- Status: Done
+
 - Intents: 20261119-eve-subagents
 - ADRs: 20261119-subagents-and-host-detection
 

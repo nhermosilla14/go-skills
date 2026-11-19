@@ -38,6 +38,8 @@ const (
 	StepEve StepID = "eve"
 	// StepAgents is the agent multi-select.
 	StepAgents StepID = "agents"
+	// StepSubagents is the Eve multi-select of the root agent and its subagents.
+	StepSubagents StepID = "subagents"
 	// StepScope selects the installation scope.
 	StepScope StepID = "scope"
 	// StepUpdateScope selects the update scope: project, global or both.
@@ -57,11 +59,12 @@ const (
 // Answers are the decisions of one interactive run. Every field is plain data so the use case
 // reads them back after the prompt session ends.
 type Answers struct {
-	Scope   Scope
-	Skills  []string // selected skill names
-	Agents  []string // selected agent identifiers
-	Mode    install.Mode
-	Proceed bool
+	Scope     Scope
+	Skills    []string // selected skill names
+	Agents    []string // selected agent identifiers
+	Subagents []string // Eve placement: "" for the root agent plus selected subagents
+	Mode      install.Mode
+	Proceed   bool
 }
 
 // Prompter asks the questions of one flow and returns the answers at once. A prompter that cannot
@@ -88,14 +91,22 @@ type AgentChoice struct {
 	Detected  bool   // a detected agent is preselected
 }
 
+// SubagentChoice is one Eve target as the multi-select presents it. An empty Name is the root
+// agent at agent/skills.
+type SubagentChoice struct {
+	Name string // subagent name; empty for the root agent
+	Dir  string // skills directory, the picker's hint
+}
+
 // Questions is everything the flow needs to ask, compiled by PlanQuestions.
 type Questions struct {
-	Steps    []StepID      // prompts to show, in order
-	Source   string        // source as the user wrote it
-	Skills   []SkillChoice // every discovered skill, in display order
-	Agents   []AgentChoice // every pickable agent, in registry order
-	Message  string        // optional confirmation text, used by the remove flow
-	Defaults Answers       // answers for the steps that are not asked
+	Steps     []StepID         // prompts to show, in order
+	Source    string           // source as the user wrote it
+	Skills    []SkillChoice    // every discovered skill, in display order
+	Agents    []AgentChoice    // every pickable agent, in registry order
+	Subagents []SubagentChoice // Eve's root agent and discovered subagents, sorted
+	Message   string           // optional confirmation text, used by the remove flow
+	Defaults  Answers          // answers for the steps that are not asked
 }
 
 // Facts are the discovery facts the prompt matrix and the selector need.
@@ -107,6 +118,8 @@ type Facts struct {
 	Candidates      []agents.Agent // agents the run targets without a picker answer
 	All             []agents.Agent // every registry agent, in registry order
 	EveDetected     bool           // an Eve project was detected
+	EveTargeted     bool           // the run installs for Eve
+	Subagents       []string       // Eve subagents discovered under agent/subagents, sorted
 	CanGoGlobal     bool           // at least one candidate has a global skills directory
 	Mode            install.Mode   // mode the run resolves to before any answer
 }
@@ -121,13 +134,16 @@ func PlanSteps(opts AddOptions, facts Facts) []StepID {
 	if len(facts.Skills) > 1 && len(facts.RequestedSkills) == 0 {
 		steps = append(steps, StepSkills)
 	}
-	if len(opts.Agents) == 0 {
+	if len(opts.Agents) == 0 && len(opts.Subagents) == 0 {
 		if facts.EveDetected {
 			steps = append(steps, StepEve)
 		}
 		if !singleNonEveDetected(facts.Detected) {
 			steps = append(steps, StepAgents)
 		}
+	}
+	if len(opts.Subagents) == 0 && facts.EveTargeted && len(facts.Subagents) > 0 {
+		steps = append(steps, StepSubagents)
 	}
 	if !opts.Global && facts.CanGoGlobal {
 		steps = append(steps, StepScope)
@@ -142,14 +158,16 @@ func PlanSteps(opts AddOptions, facts Facts) []StepID {
 // the same inputs always yield the same steps and choices.
 func PlanQuestions(opts AddOptions, facts Facts) Questions {
 	q := Questions{
-		Steps:  PlanSteps(opts, facts),
-		Source: facts.Source,
-		Skills: skillChoices(facts.Skills),
-		Agents: agentChoices(facts.All, facts.Detected),
+		Steps:     PlanSteps(opts, facts),
+		Source:    facts.Source,
+		Skills:    skillChoices(facts.Skills),
+		Agents:    agentChoices(facts.All, facts.Detected),
+		Subagents: subagentChoices(facts.Subagents),
 		Defaults: Answers{
-			Scope:  ScopeProject,
-			Agents: agentIDs(facts.Candidates),
-			Mode:   facts.Mode,
+			Scope:     ScopeProject,
+			Agents:    agentIDs(facts.Candidates),
+			Subagents: []string{""},
+			Mode:      facts.Mode,
 		},
 	}
 	names := make([]string, 0, len(facts.Skills))
@@ -227,6 +245,16 @@ func agentChoices(all, detected []agents.Agent) []AgentChoice {
 			Hidden:    a.HiddenFromPrompt,
 			Detected:  found[a.ID],
 		})
+	}
+	return out
+}
+
+// subagentChoices presents Eve's root agent first and then one entry per discovered subagent.
+func subagentChoices(names []string) []SubagentChoice {
+	out := make([]SubagentChoice, 0, len(names)+1)
+	out = append(out, SubagentChoice{Dir: "agent/skills"})
+	for _, name := range names {
+		out = append(out, SubagentChoice{Name: name, Dir: "agent/subagents/" + name + "/skills"})
 	}
 	return out
 }

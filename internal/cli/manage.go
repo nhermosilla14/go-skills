@@ -20,6 +20,7 @@ type ListEntry struct {
 	Path        *string  `json:"path"`
 	Scope       string   `json:"scope"`
 	Agents      []string `json:"agents"`
+	Subagents   []string `json:"subagents,omitempty"`
 	Source      *string  `json:"source"`
 	SourceURL   *string  `json:"sourceUrl"`
 	SourceType  *string  `json:"sourceType"`
@@ -35,6 +36,7 @@ func ListJSON(rep app.ListReport) []ListEntry {
 			Name:        s.Name,
 			Scope:       rep.Scope,
 			Agents:      append([]string{}, s.Agents...),
+			Subagents:   append([]string{}, s.Subagents...),
 			Source:      optionalText(s.Source),
 			SourceURL:   optionalText(s.SourceURL),
 			SourceType:  optionalText(s.SourceType),
@@ -92,7 +94,7 @@ func WriteList(w io.Writer, rep app.ListReport) {
 	}
 	for _, s := range shown {
 		fmt.Fprintf(w, "%s %s\n", padText(displayText(s.Name), width), displayText(s.Path))
-		fmt.Fprintf(w, "  Agents: %s  Source: %s\n", agentList(s.Agents), sourceLine(s))
+		fmt.Fprintf(w, "  Agents: %s  Source: %s\n", agentList(s.Agents, s.Subagents), sourceLine(s))
 	}
 	if len(missing) == 0 {
 		return
@@ -130,8 +132,9 @@ func checkScope(scope string) string {
 }
 
 // agentList renders the agent names, collapsing the tail when there are too many. No agents means
-// the skill is not linked to any agent directory.
-func agentList(names []string) string {
+// the skill is not linked to any agent directory. An Eve placement adds the root agent and the
+// subagents the skill was installed for.
+func agentList(names, subagents []string) string {
 	if len(names) == 0 {
 		return "not linked"
 	}
@@ -145,7 +148,24 @@ func agentList(names []string) string {
 	for i, name := range shown {
 		clean[i] = displayText(name)
 	}
-	return strings.Join(clean, ", ") + suffix
+	out := strings.Join(clean, ", ") + suffix
+	if len(subagents) > 0 {
+		out += " (" + strings.Join(subagentLabels(subagents), ", ") + ")"
+	}
+	return out
+}
+
+// subagentLabels names an Eve placement: the root agent and the selected subagents.
+func subagentLabels(names []string) []string {
+	out := make([]string, len(names))
+	for i, name := range names {
+		if name == "" {
+			out[i] = "root"
+			continue
+		}
+		out[i] = displayText(name)
+	}
+	return out
 }
 
 // sourceLine renders the lock source of a skill with its rename and modification notes.

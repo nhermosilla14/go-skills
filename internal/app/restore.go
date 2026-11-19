@@ -247,6 +247,10 @@ func frozenLocalFailures(tasks []restoreTask, env agents.Environment) []string {
 				"(migrated from version 1, and the installed skill was missing or did not match)")
 			continue
 		}
+		if evePlaced(t.entry.Subagents) {
+			lines = append(lines, eveFrozenFailure(env, name, t.key, t.entry)...)
+			continue
+		}
 		canonical := filepath.Join(scopeCanonicalDir(env, false), skill.SanitizeName(t.key))
 		digest, err := hash.Dir(canonical)
 		if err != nil {
@@ -258,6 +262,31 @@ func frozenLocalFailures(tasks []restoreTask, env agents.Environment) []string {
 		}
 	}
 	return lines
+}
+
+// eveFrozenFailure reports why a frozen restore refuses an Eve placement: a recorded flat file is
+// missing, or neither the flat file nor a canonical copy written for other agents still hashes to
+// the lock.
+func eveFrozenFailure(env agents.Environment, display, key string, entry lockfile.Entry) []string {
+	installed := skill.SanitizeName(key)
+	files := eveFlatFiles(env, installed, entry.Subagents)
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			return []string{display + " is missing; skills-lock.json expects the installed content"}
+		}
+	}
+	if len(files) > 0 {
+		if digest, err := hash.SingleFile(files[0]); err == nil &&
+			strings.EqualFold(digest, entry.ComputedHash) {
+			return nil
+		}
+	}
+	canonical := filepath.Join(scopeCanonicalDir(env, false), installed)
+	if digest, err := hash.Dir(canonical); err == nil &&
+		strings.EqualFold(digest, entry.ComputedHash) {
+		return nil
+	}
+	return []string{display + " has changed since skills-lock.json was written"}
 }
 
 // frozenSourceFailures lists the locked entries whose source could not be fetched, or no longer
@@ -342,7 +371,7 @@ func planRestore(lock *lockfile.File, rep *RestoreReport) ([]restoreTask, []*res
 			continue
 		}
 		mode := install.ModeSymlink
-		if entry.InstallMode == "copy" {
+		if entry.InstallMode == "copy" || evePlaced(entry.Subagents) {
 			mode = install.ModeCopy
 		}
 		groupKey := fetch + "\x00" + entry.Commit + "\x00" + string(mode)
@@ -444,7 +473,12 @@ func restoreSkill(env Env, agentEnv agents.Environment, targets []agents.Agent, 
 		return RestoreResult{Name: t.key, Status: RestoreFailed, Reason: located.Reason}, false
 	}
 	installed := skill.SanitizeName(t.key)
-	if t.mode == install.ModeSymlink && !opts.Force && t.entry.ComputedHash != "" {
+	rename := restoreRename(found, installed)
+	if evePlaced(t.entry.Subagents) {
+		if !opts.Force && eveCurrent(agentEnv, installed, t.entry.Subagents, found) {
+			return RestoreResult{Name: t.key, Status: RestoreSkipped}, false
+		}
+	} else if t.mode == install.ModeSymlink && !opts.Force && t.entry.ComputedHash != "" {
 		canonical := filepath.Join(scopeCanonicalDir(agentEnv, false), installed)
 		if digest, err := hash.Dir(canonical); err == nil &&
 			strings.EqualFold(digest, t.entry.ComputedHash) {
@@ -454,9 +488,8 @@ func restoreSkill(env Env, agentEnv agents.Environment, targets []agents.Agent, 
 	if opts.DryRun {
 		return RestoreResult{Name: t.key, Status: RestoreRestored}, false
 	}
-	rename := restoreRename(found, installed)
-	entries := install.Plan(env.WorkDir, []skill.Skill{found}, restoreTargets(targets),
-		install.PlanOptions{Env: agentEnv, Mode: t.mode, Rename: rename})
+	entries := install.Plan(env.WorkDir, []skill.Skill{found}, restoreEntryTargets(targets, t.entry),
+		install.PlanOptions{Env: agentEnv, Mode: t.mode, Rename: rename, Subagents: t.entry.Subagents})
 	results := install.Apply(env.WorkDir, entries)
 	if message, failed := firstFailure(results); failed {
 		return RestoreResult{Name: t.key, Status: RestoreFailed, Reason: message}, false
@@ -520,6 +553,17 @@ func restoreTargets(targets []agents.Agent) []agents.Agent {
 		return universalTargets()
 	}
 	return targets
+}
+
+// restoreEntryTargets is the set of link targets of an entry. An entry that records an Eve
+// placement always targets Eve, so its flat files come back even when the resolved selection does
+// not name it.
+func restoreEntryTargets(targets []agents.Agent, entry lockfile.Entry) []agents.Agent {
+	selected := restoreTargets(targets)
+	if !evePlaced(entry.Subagents) || targetsEve(selected) {
+		return selected
+	}
+	return withEve(selected)
 }
 
 // linksPresent reports whether every agent target already holds the skill.

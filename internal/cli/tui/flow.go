@@ -100,6 +100,10 @@ func (f *flow) open() tea.Cmd {
 			f.index++
 			continue
 		}
+		if step == app.StepSubagents && !f.eveSelected() {
+			f.index++
+			continue
+		}
 		f.current = f.newStep(step)
 		f.current.resize(f.width, f.height)
 		return nil
@@ -119,6 +123,9 @@ func (f *flow) newStep(step app.StepID) stepModel {
 	case app.StepAgents:
 		items, sections := agentLists(f.questions.Agents)
 		return newSelector(f.theme, step, "Select agents to install", items, sections)
+	case app.StepSubagents:
+		return newSelector(f.theme, step, "Select Eve targets", subagentItems(f.questions.Subagents),
+			[]section{plainSection(len(f.questions.Subagents))})
 	case app.StepScope:
 		return newChoice(f.theme, step, "Installation scope", []option{
 			{label: "Project", detail: "Install in current directory (committed with your project)"},
@@ -188,11 +195,7 @@ func skillSections(skills []app.SkillChoice) []section {
 		}
 	}
 	if !grouped {
-		indexes := make([]int, len(skills))
-		for i := range skills {
-			indexes[i] = i
-		}
-		return []section{{items: indexes}}
+		return []section{plainSection(len(skills))}
 	}
 	var sections []section
 	index := map[string]int{}
@@ -206,6 +209,38 @@ func skillSections(skills []app.SkillChoice) []section {
 		sections[at].items = append(sections[at].items, i)
 	}
 	return sections
+}
+
+// plainSection is the single section of a list without headings.
+func plainSection(n int) section {
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	return section{items: items}
+}
+
+// subagentItems presents Eve's root agent first, already selected, and one row per subagent.
+func subagentItems(choices []app.SubagentChoice) []item {
+	items := make([]item, 0, len(choices))
+	for _, c := range choices {
+		if c.Name == "" {
+			items = append(items, item{title: "Root agent", hint: c.Dir, checked: true})
+			continue
+		}
+		items = append(items, item{id: c.Name, title: c.Name, hint: c.Dir})
+	}
+	return items
+}
+
+// eveSelected reports whether the answers target Eve, which is when the subagent step makes sense.
+func (f *flow) eveSelected() bool {
+	for _, id := range f.answers.Agents {
+		if id == "eve" {
+			return true
+		}
+	}
+	return false
 }
 
 // agentLists builds the universal locked section and the selectable agents. Hidden universal
