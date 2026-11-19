@@ -498,6 +498,69 @@ func TestParseUpdateHelp(t *testing.T) {
 	}
 }
 
+func TestParseInit(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want app.InitOptions
+	}{
+		{"no name", []string{"init"}, app.InitOptions{}},
+		{"name", []string{"init", "my-skill"}, app.InitOptions{Name: "my-skill"}},
+		{"name after terminator", []string{"init", "--", "-my-skill"}, app.InitOptions{Name: "-my-skill"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cmd.Kind != KindInit {
+				t.Fatalf("Kind = %v, want KindInit", cmd.Kind)
+			}
+			if cmd.Init != tc.want {
+				t.Errorf("Init = %+v, want %+v", cmd.Init, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseInitUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"two names", []string{"init", "one", "two"}, "unexpected argument 'two'"},
+		{"empty name", []string{"init", ""}, "skill name must not be empty"},
+		{"unknown flag", []string{"init", "--force"}, "unknown option '--force'"},
+		{"unknown short", []string{"init", "-q"}, "unknown option '-q'"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.args)
+			var usage *UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("err = %v, want UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseInitHelp(t *testing.T) {
+	for _, args := range [][]string{{"init", "-h"}, {"init", "--help"}} {
+		cmd, err := Parse(args)
+		if err != nil {
+			t.Fatalf("Parse %v: %v", args, err)
+		}
+		if cmd.Kind != KindHelp {
+			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		}
+	}
+}
+
 func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	help := Help()
 	for _, want := range []string{
@@ -505,7 +568,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
 		"remove, rm, r", "--all", "update, upgrade", "--project",
 		"experimental_install", "Restore options:", "--dry-run",
-		"--frozen-lockfile", "--no-frozen-lockfile", "JENKINS_URL",
+		"--frozen-lockfile", "--no-frozen-lockfile", "JENKINS_URL", "init [name]",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

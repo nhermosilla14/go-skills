@@ -65,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runRestore(cmd.Restore, stderr)
 	case cli.KindUse:
 		return runUse(cmd, stdout, stderr)
+	case cli.KindInit:
+		return runInit(cmd.Init, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -284,6 +286,20 @@ func runUse(cmd cli.Command, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	return exitOK
+}
+
+// runInit runs `init`, whose human output goes to stderr; nothing is written to stdout.
+func runInit(opts app.InitOptions, stderr io.Writer) int {
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	rep, err := app.Init(opts, env)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	cli.WriteInit(stderr, rep)
 	return exitOK
 }
 

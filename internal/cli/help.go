@@ -17,6 +17,7 @@ Commands:
                     skills-lock.json (alias: i)
   use <source>[@skill]
                     Use one skill without installing it
+  init [name]       Create a SKILL.md template, here or in a new directory
   experimental_install
                     Restore skills from skills-lock.json
   list, ls          List installed skills and their lock status

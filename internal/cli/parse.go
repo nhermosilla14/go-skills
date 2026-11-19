@@ -19,6 +19,7 @@ const (
 	KindUpdate
 	KindRestore
 	KindUse
+	KindInit
 )
 
 // Command is a parsed command line.
@@ -31,6 +32,7 @@ type Command struct {
 	Update  app.UpdateOptions  // set when Kind is KindUpdate
 	Restore app.RestoreOptions // set when Kind is KindRestore
 	Use     UseOptions         // set when Kind is KindUse
+	Init    app.InitOptions    // set when Kind is KindInit
 	UseHelp bool               // use asked for its own help
 	JSON    bool               // --json, for list
 }
@@ -73,6 +75,8 @@ func Parse(args []string) (Command, error) {
 		return parseRemove(args[1:])
 	case name == "use":
 		return parseUse(args[1:])
+	case name == "init":
+		return parseInit(args[1:])
 	case strings.HasPrefix(name, "-"):
 		return Command{}, usagef("unknown option '%s'", name)
 	default:
@@ -897,4 +901,38 @@ func (p *useParser) repeatable(args []string, i int, name, inline string, hasInl
 		p.opts.Skills = append(p.opts.Skills, values...)
 	}
 	return last, nil
+}
+
+// parseInit parses `init [name]`: one optional positional name, and the rejected extra positionals
+// and options.
+func parseInit(args []string) (Command, error) {
+	names := make([]string, 0, 1)
+	help := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			names = append(names, args[i+1:]...)
+			i = len(args)
+		case arg == "-h" || arg == "--help":
+			help = true
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			return Command{}, usagef("unknown option '%s'", arg)
+		default:
+			names = append(names, arg)
+		}
+	}
+	if help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if len(names) > 1 {
+		return Command{}, usagef("unexpected argument '%s': only one skill name is allowed", names[1])
+	}
+	if len(names) == 1 {
+		if names[0] == "" {
+			return Command{}, usagef("skill name must not be empty")
+		}
+		return Command{Kind: KindInit, Init: app.InitOptions{Name: names[0]}}, nil
+	}
+	return Command{Kind: KindInit}, nil
 }

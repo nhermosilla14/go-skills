@@ -28,7 +28,7 @@ func SetFrontmatterName(raw []byte, name string) []byte {
 		eol = "\r\n"
 	}
 	lines := frontmatterLines.Split(string(body), -1)
-	line := "name: " + yamlScalar(name)
+	line := "name: " + YAMLScalar(name)
 	if idx := nameLineIndex(lines); idx >= 0 {
 		end := idx + 1
 		for end < len(lines) && (strings.HasPrefix(lines[end], " ") || strings.HasPrefix(lines[end], "\t")) {
@@ -55,8 +55,9 @@ func nameLineIndex(lines []string) int {
 	return -1
 }
 
-// yamlScalar encodes a value as a YAML scalar, quoting it when YAML would otherwise coerce it.
-func yamlScalar(value string) string {
+// YAMLScalar encodes a value as a frontmatter YAML scalar, quoting it when YAML would otherwise
+// coerce it to another type or break the document.
+func YAMLScalar(value string) string {
 	out, err := yaml.Marshal(map[string]string{"name": value})
 	if err != nil {
 		return value
