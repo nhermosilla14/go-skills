@@ -111,6 +111,11 @@ func (f *File) Get(name string) (Entry, bool) {
 	return e, ok
 }
 
+// Delete removes the entry for name. The remaining entries are left untouched.
+func (f *File) Delete(name string) {
+	delete(f.Skills, name)
+}
+
 // UnmarshalJSON reads an entry and keeps the fields it does not know.
 func (e *Entry) UnmarshalJSON(data []byte) error {
 	type plain Entry // same fields, no methods, so the decoder does not recurse

@@ -67,6 +67,8 @@ Current, working subset:
 ./skills list
 ./skills list --json
 ./skills check
+./skills remove web-design -a claude-code
+./skills rm --all
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -85,7 +87,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | --- | --- | --- |
 | `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial |
 | `list` | List installed skills and compare them with the project lock file. | Project scope |
-| `remove` | Remove installed skills and their lock entries. | `TODO` |
+| `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Project scope |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |
 | `check` | Report whether tracked skills are outdated without changing anything. | Project scope |
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | `TODO` |

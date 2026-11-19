@@ -9,6 +9,35 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/app"
 )
 
+func TestWriteRemoveSanitizesAndSummarises(t *testing.T) {
+	rep := app.RemoveReport{
+		Results: []app.RemoveResult{
+			{Skill: "flat\nskill", Agent: "claude-code", Path: "/p/\x1b[31mred",
+				Status: app.RemoveRemoved},
+			{Skill: "kept", Agent: "universal", Path: "/p/.agents/skills/kept",
+				Status: app.RemoveSkipped, Message: "still linked by Cursor"},
+		},
+		Notes:    []string{"removed lock entry flat"},
+		LockPath: "/p/skills-lock.json",
+	}
+	var out bytes.Buffer
+	WriteRemove(&out, rep)
+	if strings.ContainsAny(out.String(), "\x1b\r") {
+		t.Errorf("output carries terminal escapes: %q", out.String())
+	}
+	for _, want := range []string{
+		"removed: flat skill -> claude-code",
+		"skipped: kept -> universal",
+		"note: removed lock entry flat",
+		"Removed 1, skipped 1, failed 0",
+		"Updated /p/skills-lock.json",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output misses %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestWriteListHuman(t *testing.T) {
 	rep := app.ListReport{
 		Scope: "project",

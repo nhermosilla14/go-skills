@@ -234,11 +234,112 @@ func TestParseListAndCheckUsageErrors(t *testing.T) {
 	}
 }
 
+func TestParseRemoveOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want app.RemoveOptions
+	}{
+		{
+			name: "names and agent",
+			args: []string{"remove", "alpha", "beta", "-a", "claude-code", "opencode", "-y"},
+			want: app.RemoveOptions{Skills: []string{"alpha", "beta"},
+				Agents: []string{"claude-code", "opencode"}, Yes: true},
+		},
+		{
+			name: "aliases",
+			args: []string{"rm", "alpha"},
+			want: app.RemoveOptions{Skills: []string{"alpha"}},
+		},
+		{
+			name: "single letter alias",
+			args: []string{"r", "alpha"},
+			want: app.RemoveOptions{Skills: []string{"alpha"}},
+		},
+		{
+			name: "skill flag and positionals accumulate",
+			args: []string{"remove", "alpha", "-s", "beta", "--skill=gamma"},
+			want: app.RemoveOptions{Skills: []string{"alpha", "beta", "gamma"}},
+		},
+		{
+			name: "wildcard skill",
+			args: []string{"remove", "-s", "*", "-y"},
+			want: app.RemoveOptions{Skills: []string{"*"}, Yes: true},
+		},
+		{
+			name: "all implies every agent and yes",
+			args: []string{"remove", "--all", "-a", "claude-code"},
+			want: app.RemoveOptions{Agents: []string{"*"}, All: true, Yes: true},
+		},
+		{
+			name: "double dash keeps an option-like name",
+			args: []string{"remove", "-y", "--", "-weird"},
+			want: app.RemoveOptions{Skills: []string{"-weird"}, Yes: true},
+		},
+		{
+			name: "wildcard agent",
+			args: []string{"remove", "alpha", "-a", "*", "-y"},
+			want: app.RemoveOptions{Skills: []string{"alpha"}, Agents: []string{"*"}, Yes: true},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cmd.Kind != KindRemove {
+				t.Fatalf("Kind = %v, want KindRemove", cmd.Kind)
+			}
+			if !reflect.DeepEqual(cmd.Remove, tc.want) {
+				t.Errorf("Remove = %+v, want %+v", cmd.Remove, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseRemoveUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"global", []string{"remove", "alpha", "-g"}, "global scope is not supported yet"},
+		{"long global", []string{"remove", "--global"}, "global scope is not supported yet"},
+		{"unknown flag", []string{"remove", "--force"}, "unknown option '--force'"},
+		{"unknown short", []string{"remove", "-q"}, "unknown option '-q'"},
+		{"agent without value", []string{"remove", "-a"}, "--agent requires an agent name"},
+		{"skill without value", []string{"remove", "--skill"}, "--skill requires a skill name"},
+		{"boolean with value", []string{"remove", "--all=1"}, "--all does not take a value"},
+		{"short value not last", []string{"remove", "-ay"}, "-a takes a value and must be last"},
+		{"help", []string{"remove", "--help"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if tc.want == "" {
+				if err != nil || cmd.Kind != KindHelp {
+					t.Fatalf("Parse %v = %v, %v; want help", tc.args, cmd.Kind, err)
+				}
+				return
+			}
+			var usage *UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("err = %v, want UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	help := Help()
 	for _, want := range []string{
 		"claude-code", "opencode", "--copy", "--list", "--json", "--subagent",
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
+		"remove, rm, r", "--all",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

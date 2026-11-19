@@ -17,6 +17,7 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/app"
 	"github.com/nhermosilla14/go-skills/internal/cli"
 	"github.com/nhermosilla14/go-skills/internal/cli/tui"
+	"github.com/nhermosilla14/go-skills/internal/skill"
 )
 
 // Build metadata, set at link time with -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
@@ -56,6 +57,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runList(cmd, stdout, stderr)
 	case cli.KindCheck:
 		return runCheck(cmd.Check, stdout, stderr)
+	case cli.KindRemove:
+		return runRemove(cmd.Remove, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -173,6 +176,37 @@ func runCheck(opts app.CheckOptions, stdout, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	cli.WriteCheck(stdout, rep)
+	if rep.Failed() {
+		return exitFailure
+	}
+	return exitOK
+}
+
+// runRemove runs `remove`, whose progress and result summary go to the human stream.
+func runRemove(opts app.RemoveOptions, stderr io.Writer) int {
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	prompter := app.Prompter(app.NoPrompts{})
+	if env.IsTTY {
+		prompter = tui.New(os.Stdin, stderr, tui.Options{Color: colorEnabled(), ASCII: !utf8Locale()})
+	}
+	rep, err := app.Remove(opts, env, prompter)
+	if err != nil {
+		for _, note := range rep.Notes {
+			fmt.Fprintf(stderr, "note: %s\n", skill.SanitizeDisplay(note))
+		}
+		if errors.Is(err, app.ErrCancelled) {
+			fmt.Fprintln(stderr, "Removal cancelled")
+			if env.IsTTY {
+				return exitOK
+			}
+			return exitFailure
+		}
+		return reportError(stderr, err)
+	}
+	cli.WriteRemove(stderr, rep)
 	if rep.Failed() {
 		return exitFailure
 	}

@@ -122,13 +122,14 @@ type selector struct {
 }
 
 func newSelector(theme theme, step app.StepID, title string, items []item, sections []section) *selector {
+	skillStep := step == app.StepSkills || step == app.StepRemoveSkills
 	s := &selector{
 		title:      title,
 		items:      items,
 		sections:   sections,
-		selectAll:  step == app.StepSkills,
+		selectAll:  skillStep,
 		requireOne: true,
-		detail:     step == app.StepSkills,
+		detail:     skillStep,
 		step:       step,
 		keys:       defaultKeys(),
 		theme:      theme,

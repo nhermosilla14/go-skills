@@ -1,5 +1,7 @@
 # Remove
 
+- Status: Done
+
 - Intents: 20261119-skill-management-and-scopes
 - ADRs: 20261119-upstream-defect-corrections, 20261119-install-plan-and-filesystem-model
 

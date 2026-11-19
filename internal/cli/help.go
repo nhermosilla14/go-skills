@@ -15,6 +15,7 @@ Commands:
   add <source>      Install the skills found in a source
   list, ls          List installed project skills and their lock status
   check [skill...]  Report available updates and local changes, without writing
+  remove, rm, r     Remove installed project skills
   help              Show this help
   version           Show version, commit and build date
 
@@ -59,8 +60,17 @@ Check options:
   check [skill...]         Limit the check to the named skills
   -h, --help               Show this help
 
+Remove options:
+  remove [skill...] [source]  Remove by name, or every skill tracked from an exact source
+  -a, --agent <agent...>   Only these agents (default: every agent that has the skill).
+                           Use '*' for all.
+  -s, --skill <name...>    Skills to remove. Use '*' for every lock-tracked skill.
+  -y, --yes                Remove without prompting
+      --all                Remove every lock-tracked skill for every agent, without prompting
+  -h, --help               Show this help
+
 Output: progress, prompts and results go to stderr; --json, --list, list and check
 reports go to stdout.
-Exit codes: 0 success, 1 failure or a check finding, 2 usage error.
+Exit codes: 0 success, 1 failure, no match or a check finding, 2 usage error.
 `, strings.Join(agents.IDs(), ", "))
 }

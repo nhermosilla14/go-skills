@@ -15,15 +15,17 @@ const (
 	KindAdd
 	KindList
 	KindCheck
+	KindRemove
 )
 
 // Command is a parsed command line.
 type Command struct {
-	Kind  Kind
-	Add   app.AddOptions   // set when Kind is KindAdd
-	List  app.ListOptions  // set when Kind is KindList
-	Check app.CheckOptions // set when Kind is KindCheck
-	JSON  bool             // --json, for list
+	Kind   Kind
+	Add    app.AddOptions    // set when Kind is KindAdd
+	List   app.ListOptions   // set when Kind is KindList
+	Check  app.CheckOptions  // set when Kind is KindCheck
+	Remove app.RemoveOptions // set when Kind is KindRemove
+	JSON   bool              // --json, for list
 }
 
 // addNames are the spellings of the add command. install and i are add with a source.
@@ -47,6 +49,8 @@ func Parse(args []string) (Command, error) {
 		return parseList(args[1:])
 	case name == "check":
 		return parseCheck(args[1:])
+	case name == "remove" || name == "rm" || name == "r":
+		return parseRemove(args[1:])
 	case strings.HasPrefix(name, "-"):
 		return Command{}, usagef("unknown option '%s'", name)
 	default:
@@ -394,4 +398,120 @@ func parseCheck(args []string) (Command, error) {
 		return Command{}, usagef("global scope is not supported yet")
 	}
 	return Command{Kind: KindCheck, Check: p.opts}, nil
+}
+
+// removeParser accumulates the options of remove.
+type removeParser struct {
+	opts   app.RemoveOptions
+	global bool
+	help   bool
+}
+
+// parseRemove parses `remove` / `rm` / `r`: repeated --agent and --skill values, -y, --all and the
+// rejected --global. Positionals are skill names or an exact lock source.
+func parseRemove(args []string) (Command, error) {
+	p := &removeParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var err error
+		switch {
+		case arg == "--":
+			p.opts.Skills = append(p.opts.Skills, args[i+1:]...)
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			i, err = p.long(args, i)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			i, err = p.short(args, i)
+		default:
+			p.opts.Skills = append(p.opts.Skills, arg)
+		}
+		if err != nil {
+			return Command{}, err
+		}
+	}
+	if p.help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if p.global {
+		return Command{}, usagef("global scope is not supported yet")
+	}
+	if p.opts.All {
+		p.opts.Agents = []string{"*"}
+		p.opts.Yes = true
+	}
+	return Command{Kind: KindRemove, Remove: p.opts}, nil
+}
+
+func (p *removeParser) long(args []string, i int) (int, error) {
+	name, value, hasValue := strings.Cut(args[i][2:], "=")
+	switch name {
+	case "agent", "skill":
+		return p.repeatable(args, i, name, value, hasValue)
+	case "yes", "all", "global", "help":
+		if hasValue {
+			return i, usagef("--%s does not take a value", name)
+		}
+		switch name {
+		case "yes":
+			p.opts.Yes = true
+		case "all":
+			p.opts.All = true
+		case "global":
+			p.global = true
+		case "help":
+			p.help = true
+		}
+		return i, nil
+	}
+	return i, usagef("unknown option '--%s'", name)
+}
+
+func (p *removeParser) short(args []string, i int) (int, error) {
+	group, value, hasValue := strings.Cut(args[i][1:], "=")
+	for k := 0; k < len(group); k++ {
+		letter := group[k]
+		switch letter {
+		case 'a', 's':
+			if k != len(group)-1 {
+				return i, usagef("-%c takes a value and must be last in its group", letter)
+			}
+			name := "agent"
+			if letter == 's' {
+				name = "skill"
+			}
+			return p.repeatable(args, i, name, value, hasValue)
+		case 'y', 'g', 'h':
+			if hasValue && k == len(group)-1 {
+				return i, usagef("-%c does not take a value", letter)
+			}
+			switch letter {
+			case 'y':
+				p.opts.Yes = true
+			case 'g':
+				p.global = true
+			case 'h':
+				p.help = true
+			}
+		default:
+			return i, usagef("unknown option '-%c'", letter)
+		}
+	}
+	return i, nil
+}
+
+func (p *removeParser) repeatable(args []string, i int, name, inline string, hasInline bool) (int, error) {
+	values, last := collectValues(args, i, inline, hasInline)
+	if len(values) == 0 || (hasInline && inline == "") {
+		noun := "an agent name"
+		if name == "skill" {
+			noun = "a skill name"
+		}
+		return i, usagef("--%s requires %s", name, noun)
+	}
+	if name == "agent" {
+		p.opts.Agents = append(p.opts.Agents, values...)
+	} else {
+		p.opts.Skills = append(p.opts.Skills, values...)
+	}
+	return last, nil
 }

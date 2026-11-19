@@ -131,6 +131,15 @@ func (f *flow) newStep(step app.StepID) stepModel {
 		})
 	case app.StepEve:
 		return newConfirm(f.theme, step, f.eveQuestion())
+	case app.StepRemoveSkills:
+		return newSelector(f.theme, step, "Select skills to remove",
+			skillItems(f.questions.Skills), skillSections(f.questions.Skills))
+	case app.StepRemoveConfirm:
+		title := f.questions.Message
+		if title == "" {
+			title = "Remove the selected skills?"
+		}
+		return newConfirm(f.theme, step, title)
 	}
 	return newConfirm(f.theme, step, "Proceed with installation?")
 }

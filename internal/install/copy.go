@@ -14,6 +14,10 @@ import (
 // categoryDirs are agent container directories; a skill is never installed over them.
 var categoryDirs = map[string]bool{".curated": true, ".experimental": true, ".system": true}
 
+// IsCategoryDir reports whether base is one of the agent category directories, which are never
+// install targets and are never removed.
+func IsCategoryDir(base string) bool { return categoryDirs[base] }
+
 var (
 	// ErrCategoryDir reports an install destination that is a category directory.
 	ErrCategoryDir = errors.New("destination is a category directory")

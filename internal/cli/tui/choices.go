@@ -154,13 +154,13 @@ func (c *confirm) update(msg tea.Msg) (stepResult, tea.Cmd) {
 	return stepRunning, nil
 }
 
-// answer finishes the prompt. Declining the final confirmation cancels the run; declining the Eve
+// answer finishes the prompt. Declining a final confirmation cancels the run; declining the Eve
 // question only continues to the agent picker.
 func (c *confirm) answer() (stepResult, tea.Cmd) {
 	if c.cursor == 0 {
 		return stepFinished, nil
 	}
-	if c.step == app.StepConfirm {
+	if c.step == app.StepConfirm || c.step == app.StepRemoveConfirm {
 		return stepCancelled, nil
 	}
 	return stepFinished, nil
@@ -174,7 +174,7 @@ func (c *confirm) resize(width, _ int) {
 
 func (c *confirm) apply(a *app.Answers) {
 	switch c.step {
-	case app.StepConfirm:
+	case app.StepConfirm, app.StepRemoveConfirm:
 		a.Proceed = c.cursor == 0
 	case app.StepEve:
 		// Declining clears the targets so the agent picker decides them.

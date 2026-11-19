@@ -42,6 +42,10 @@ const (
 	StepMethod StepID = "method"
 	// StepConfirm is the final yes/no.
 	StepConfirm StepID = "confirm"
+	// StepRemoveSkills is the multi-select of installed skills to remove.
+	StepRemoveSkills StepID = "remove-skills"
+	// StepRemoveConfirm is the yes/no before removing the selected skills.
+	StepRemoveConfirm StepID = "remove-confirm"
 )
 
 // Answers are the decisions of one interactive run. Every field is plain data so the use case
@@ -84,6 +88,7 @@ type Questions struct {
 	Source   string        // source as the user wrote it
 	Skills   []SkillChoice // every discovered skill, in display order
 	Agents   []AgentChoice // every pickable agent, in registry order
+	Message  string        // optional confirmation text, used by the remove flow
 	Defaults Answers       // answers for the steps that are not asked
 }
 
