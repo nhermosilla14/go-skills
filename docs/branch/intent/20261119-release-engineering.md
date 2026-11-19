@@ -5,8 +5,8 @@ deleted when the branch is finalized.
 
 - Status: Accepted
 - Date: 2026-11-19
-- Approved by: Nicolás Hermosilla P.
 - Owner: Nicolás Hermosilla P.
+- Approved by: Nicolás Hermosilla P.
 
 ## Goal
 

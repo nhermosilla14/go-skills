@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-19
-- Approved by: Nicolás Hermosilla P.
 - Deciders: Nicolás Hermosilla P.
+- Approved by: Nicolás Hermosilla P.
 - Spec area: affects `cli`, `install`, `lockfile`, `discovery`
 
 ## Context
@@ -36,6 +36,10 @@ Correct these behaviours. Everything not listed keeps upstream semantics.
 | 15 | Windows containment | Case-sensitive prefix checks and no reserved-name handling | Case-insensitive containment, reserved device names rejected | Correctness on the target platform |
 | 16 | `experimental_install` | Drops `via` when rewriting an entry | (Moot: sync entries are not created; restore preserves unknown fields) | Forward compatibility |
 | 17 | `add --json --metadata` | Telemetry-only flag | Flag removed | No telemetry |
+| 18 | Output streams | Human output and progress share stdout with product output | Human output and progress go to stderr; stdout carries only the JSON document, the `use` prompt, listings and help | `--json` and `use` must be pipeable |
+| 19 | Non-UTF-8 terminals | Unicode glyphs are always emitted | ASCII glyph fallback when the locale is not UTF-8 | Legacy Windows consoles |
+| 20 | `CI` environment | Forces color on | Color follows TTY and `NO_COLOR` even in CI | Ansible-style logs and log files should stay clean |
+| 21 | Install order | Follows toggle order in the selector | Skill order, then registry order | Deterministic output and lock write order |
 
 Not corrected, kept for compatibility, and therefore documented in the spec: OpenClaw's legacy
 global directories, hidden universal agents, `install`/`i` meaning restore without a source,
