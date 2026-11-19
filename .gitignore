@@ -1,0 +1,32 @@
+# Binaries and build output
+/skills
+/skills.exe
+/dist/
+/bin/
+*.test
+*.out
+coverage.*
+
+# Go workspace and tooling
+/go.work
+/go.work.sum
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+secrets.yaml
+secrets.yml
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
