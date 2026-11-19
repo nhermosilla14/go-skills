@@ -72,6 +72,23 @@ func Dir(root string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// SingleFile returns the hash of a skill installed as one flat markdown file, framed as the
+// "SKILL.md" entry of Dir so a flat install hashes like the directory form of the same content.
+func SingleFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	data = normalizeLineEndings(data)
+	h := sha256.New()
+	h.Write([]byte("SKILL.md"))
+	h.Write([]byte{0})
+	h.Write([]byte(strconv.Itoa(len(data))))
+	h.Write([]byte{0})
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // normalizeLineEndings turns CRLF into LF in text files only. A file containing a NUL byte is
 // binary and is returned untouched.
 func normalizeLineEndings(data []byte) []byte {

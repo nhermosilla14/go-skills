@@ -52,6 +52,10 @@ Current, working subset:
 ./skills add ./path/to/skills --all
 ```
 
+All 79 upstream agent ids are available with `-a <id>` (or `-a '*'`); each resolves to that
+agent's project directory, and agents that share `.agents/skills` are installed once. Detection is
+directory-based, so `-y` without `-a` installs to the agents it finds.
+
 `add` discovers skills at the source root, in `skills/` (including `.curated`, `.experimental`,
 `.system`), in agent skill directories, in containers declared by `skills.sh.json`, and in Claude
 plugin manifests, down to three directory levels; a valid root `SKILL.md` makes the repository a
@@ -59,7 +63,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills from a local directory, with selection, rename and discovery flags. Remote sources, prompts and `--json` are `TODO`. | Partial |
+| `add` | Install skills for any of the 79 agents from a local directory, with selection, rename and discovery flags. Remote sources, prompts and `--json` are `TODO`. | Partial |
 | `list` | List installed skills and compare them with the project lock file. | `TODO` |
 | `remove` | Remove installed skills and their lock entries. | `TODO` |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |

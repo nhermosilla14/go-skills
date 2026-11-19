@@ -1,5 +1,5 @@
-// Package install plans and applies skill installs into a project: a canonical copy under
-// .agents/skills plus one link or copy per agent directory.
+// Package install plans and applies skill installs: a canonical copy under .agents/skills plus
+// one link or copy per agent directory, with Eve's flat-file and the agents' path quirks.
 package install
 
 import (
@@ -9,9 +9,6 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/skill"
 )
-
-// canonicalDir is the project directory shared by agents that read .agents/skills.
-const canonicalDir = ".agents/skills"
 
 // Mode is how a skill reaches an agent directory.
 type Mode string
@@ -27,6 +24,7 @@ const (
 type Target struct {
 	Agent agents.Agent
 	Path  string // absolute destination
+	Flat  bool   // a single markdown file instead of a directory (Eve)
 }
 
 // Entry is the plan for one skill.
@@ -46,29 +44,43 @@ type Entry struct {
 	ForcedCopy bool
 }
 
-// Plan decides, without touching the disk, where each skill goes. Copy mode is used when forceCopy
-// is set or when the selected agents share at most one project skills directory. A non-empty rename
-// installs every skill under that name, which the caller restricts to one skill. Entries are sorted
-// by installed name.
-func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, forceCopy bool, rename string) []Entry {
-	derivedCopy := distinctDirs(selected) <= 1
+// PlanOptions are the inputs of planning that do not come from the skills or agents.
+type PlanOptions struct {
+	Env       agents.Environment // Cwd and Home used to resolve destinations
+	ForceCopy bool               // --copy
+	Global    bool               // global scope; its lock and CLI wiring arrive later
+	Rename    string             // --rename value
+}
+
+// Plan decides, without touching the disk, where each skill goes. Copy mode is used when ForceCopy
+// is set, when the selected agents share at most one project skills directory, or when every
+// target is Eve. A non-empty rename installs every skill under that name, which the caller
+// restricts to one skill. Entries are sorted by installed name.
+func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts PlanOptions) []Entry {
+	env := opts.Env
+	env.Cwd = projectDir
+	derivedCopy := distinctDirs(selected) <= 1 || allEve(selected)
 	mode := ModeSymlink
-	if forceCopy || derivedCopy {
+	if opts.ForceCopy || derivedCopy {
 		mode = ModeCopy
 	}
 	entries := make([]Entry, 0, len(skills))
 	for _, s := range skills {
 		name := skill.SanitizeName(s.Name)
-		if rename != "" {
-			name = rename
+		if opts.Rename != "" {
+			name = opts.Rename
 		}
-		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: forceCopy && !derivedCopy, RenameTo: rename}
+		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: opts.ForceCopy && !derivedCopy, RenameTo: opts.Rename}
 		if mode == ModeSymlink {
-			e.Canonical = filepath.Join(projectDir, filepath.FromSlash(canonicalDir), name)
+			e.Canonical = filepath.Join(agents.CanonicalSkillsDir(env, opts.Global), name)
 		}
 		for _, a := range selected {
-			dir := filepath.Join(projectDir, filepath.FromSlash(a.ProjectDir))
-			e.Targets = append(e.Targets, Target{Agent: a, Path: filepath.Join(dir, name)})
+			target := Target{Agent: a, Path: filepath.Join(a.BaseDir(env, opts.Global), name)}
+			if a.ID == "eve" {
+				target.Path = filepath.Join(a.BaseDir(env, opts.Global), name+".md")
+				target.Flat = true
+			}
+			e.Targets = append(e.Targets, target)
 		}
 		entries = append(entries, e)
 	}
@@ -76,10 +88,24 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, forc
 	return entries
 }
 
+// distinctDirs counts the project skills directories of the selected agents. It deliberately uses
+// the project paths even for global installs, as upstream's mode decision does.
 func distinctDirs(selected []agents.Agent) int {
 	dirs := map[string]bool{}
 	for _, a := range selected {
 		dirs[a.ProjectDir] = true
 	}
 	return len(dirs)
+}
+
+func allEve(selected []agents.Agent) bool {
+	if len(selected) == 0 {
+		return false
+	}
+	for _, a := range selected {
+		if a.ID != "eve" {
+			return false
+		}
+	}
+	return true
 }

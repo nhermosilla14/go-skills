@@ -52,8 +52,17 @@ type result struct {
 
 func run(t *testing.T, dir string, args ...string) result {
 	t.Helper()
+	return runEnv(t, dir, nil, args...)
+}
+
+// runEnv runs the binary with extra environment entries appended to the process environment.
+func runEnv(t *testing.T, dir string, extraEnv []string, args ...string) result {
+	t.Helper()
 	cmd := exec.Command(skillsBin, args...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -79,6 +88,7 @@ type lockEntry struct {
 	SkillPath    string `json:"skillPath"`
 	SkillName    string `json:"skillName"`
 	ComputedHash string `json:"computedHash"`
+	InstallMode  string `json:"installMode"`
 }
 
 // oracleHash is an independent implementation of the content hash contract, written from the
@@ -425,4 +435,134 @@ func TestE2ERenameRejected(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestE2EAgentMatrix installs one skill for a universal agent, a non-universal agent with its
+// project directory present, one without it, and Eve, then repeats in copy mode.
+func TestE2EAgentMatrix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("link types and Eve flat paths are POSIX-specific")
+	}
+	source, err := filepath.Abs("testdata/source")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("symlink mode", func(t *testing.T) {
+		project := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(project, ".windsurf"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		home := t.TempDir()
+		res := runEnv(t, project, []string{"HOME=" + home},
+			"add", source, "-s", "flat-skill", "-y",
+			"-a", "codex", "-a", "windsurf", "-a", "kiro-cli", "-a", "eve")
+		if res.exit != 0 {
+			t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+		}
+
+		canonical := filepath.Join(project, ".agents", "skills", "flat-skill")
+		if _, err := os.Stat(filepath.Join(canonical, "SKILL.md")); err != nil {
+			t.Errorf("canonical copy missing: %v", err)
+		}
+		link := filepath.Join(project, ".windsurf", "skills", "flat-skill")
+		target, err := os.Readlink(link)
+		if err != nil {
+			t.Fatalf("windsurf destination is not a symlink: %v", err)
+		}
+		if filepath.IsAbs(target) {
+			t.Errorf("link target %q is absolute", target)
+		}
+		if _, err := os.Stat(filepath.Join(link, "SKILL.md")); err != nil {
+			t.Errorf("windsurf link does not resolve: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(project, ".kiro")); !os.IsNotExist(err) {
+			t.Errorf("kiro project directory was created: %v", err)
+		}
+		flat := filepath.Join(project, "agent", "skills", "flat-skill.md")
+		raw, err := os.ReadFile(flat)
+		if err != nil {
+			t.Fatalf("eve flat file missing: %v", err)
+		}
+		if want := "---\nname: flat-skill\ndescription: Flat skill fixture\n---\nFlat body.\n"; string(raw) != want {
+			t.Errorf("eve flat file = %q, want %q", raw, want)
+		}
+		if _, err := os.Stat(filepath.Join(project, "agent", "skills", "flat-skill")); !os.IsNotExist(err) {
+			t.Errorf("eve also wrote a directory: %v", err)
+		}
+		for _, want := range []string{
+			"installed: flat-skill -> codex",
+			"installed: flat-skill -> windsurf",
+			"installed: flat-skill -> eve",
+			"skipped: flat-skill -> kiro-cli",
+			"project directory not found",
+			"Installed 3, skipped 1, failed 0",
+		} {
+			if !strings.Contains(res.stderr, want) {
+				t.Errorf("stderr misses %q:\n%s", want, res.stderr)
+			}
+		}
+
+		lock := readLock(t, project)
+		entry, ok := lock.Skills["flat-skill"]
+		if !ok {
+			t.Fatalf("lock has no flat-skill entry: %+v", lock.Skills)
+		}
+		if entry.InstallMode != "" {
+			t.Errorf("installMode = %q, want omitted", entry.InstallMode)
+		}
+		if want := oracleHash(t, canonical); entry.ComputedHash != want {
+			t.Errorf("computedHash = %s, oracle says %s", entry.ComputedHash, want)
+		}
+	})
+
+	t.Run("copy mode", func(t *testing.T) {
+		project := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(project, ".windsurf"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		home := t.TempDir()
+		res := runEnv(t, project, []string{"HOME=" + home},
+			"add", source, "-s", "flat-skill", "-y", "--copy",
+			"-a", "windsurf", "-a", "kiro-cli", "-a", "eve")
+		if res.exit != 0 {
+			t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+		}
+		for _, dir := range []string{
+			filepath.Join(project, ".windsurf", "skills", "flat-skill"),
+			filepath.Join(project, ".kiro", "skills", "flat-skill"),
+		} {
+			info, err := os.Lstat(dir)
+			if err != nil {
+				t.Fatalf("%s missing: %v", dir, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				t.Errorf("%s is not a plain directory", dir)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+				t.Errorf("%s is incomplete: %v", dir, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(project, "agent", "skills", "flat-skill.md")); err != nil {
+			t.Errorf("eve flat file missing: %v", err)
+		}
+		lock := readLock(t, project)
+		if entry, _ := lock.Skills["flat-skill"]; entry.InstallMode != "copy" {
+			t.Errorf("installMode = %q, want copy", entry.InstallMode)
+		}
+	})
+}
+
+// readLock parses the project lock the same way the other tests do.
+func readLock(t *testing.T, project string) lockDoc {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(project, "skills-lock.json"))
+	if err != nil {
+		t.Fatalf("lock missing: %v", err)
+	}
+	var lock lockDoc
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		t.Fatalf("lock is not JSON: %v", err)
+	}
+	return lock
 }

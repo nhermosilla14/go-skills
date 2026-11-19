@@ -37,8 +37,8 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | `internal/cli` | Argument parser, help, output rendering. TUI and `--json` are planned. | partial |
 | `internal/app` | Use cases (`Add`); source resolution; no command syntax. | partial |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
-| `internal/agents` | Agent registry and path rules (two entries; the other 77 are planned). | partial |
-| `internal/install` | Plan and apply: canonical copy, relative links, copies, fallbacks, installed-name rewrite. | partial |
+| `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
+| `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |
 | `internal/lockfile` | Project lock v2, atomic write, unknown-field preservation. Global lock is planned. | partial |
 | `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
 | `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
@@ -57,8 +57,9 @@ access sit behind small interfaces so tests run offline.
   filesystem or network directly.
 - Data formats (lock files, hash framing, install layout) are contracts and are specified in
   `docs/spec/`; changes need an ADR.
-- Platform differences are isolated in `internal/agents` (paths) and `internal/fsutil` (links,
-  atomic replace, locking).
+- Platform differences are isolated in `internal/agents` (paths and detection, with an injected
+  environment so every OS is testable anywhere), `internal/install/link_{posix,windows}.go` (links
+  and junctions) and `internal/fsutil` (atomic replace, containment).
 
 ## Diagrams
 

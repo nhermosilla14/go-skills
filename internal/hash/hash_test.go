@@ -157,3 +157,46 @@ func mustSymlink(t *testing.T, target, link string) {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 }
+
+func TestSingleFileMatchesTheSKILLMDDirectoryForm(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"SKILL.md": "---\nname: a\n---\nbody\n"})
+	want, err := Dir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := filepath.Join(t.TempDir(), "a.md")
+	if err := os.WriteFile(flat, []byte("---\nname: a\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SingleFile(flat)
+	if err != nil {
+		t.Fatalf("SingleFile: %v", err)
+	}
+	if got != want {
+		t.Errorf("SingleFile = %s, want %s", got, want)
+	}
+}
+
+func TestSingleFileNormalizesLineEndings(t *testing.T) {
+	dir := t.TempDir()
+	lf := filepath.Join(dir, "lf.md")
+	crlf := filepath.Join(dir, "crlf.md")
+	if err := os.WriteFile(lf, []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(crlf, []byte("a\r\nb\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := SingleFile(lf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := SingleFile(crlf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("CRLF hash = %s, want %s", got, want)
+	}
+}

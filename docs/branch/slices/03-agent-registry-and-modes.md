@@ -1,5 +1,7 @@
 # Agent registry, detection and install modes
 
+- Status: Done
+
 - Intents: 20261119-agent-registry-and-install-modes
 - ADRs: 20261119-package-architecture-and-dependencies, 20261119-install-plan-and-filesystem-model
 

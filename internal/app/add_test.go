@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/install"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
 )
@@ -101,6 +102,94 @@ func TestAddInstallsAndRecords(t *testing.T) {
 	}
 	if rep.LockPath == "" {
 		t.Error("LockPath not reported")
+	}
+}
+
+func TestAddDetectsAgentsWhenNoneIsNamed(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := testEnv(project)
+	env.AgentEnv = agents.Environment{
+		GOOS: "linux", Home: home, Cwd: project, Vars: map[string]string{},
+		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
+	}
+	rep, err := Add(AddOptions{Source: newSource(t), Yes: true}, env)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got := map[string]bool{}
+	for _, r := range rep.Results {
+		got[r.Agent] = true
+	}
+	if !got["cursor"] || !got["deepagents"] {
+		t.Errorf("results = %v, want the detected agent and the hidden universal ones", got)
+	}
+	if got["eve"] || got["replit"] || got["antigravity"] {
+		t.Errorf("results = %v, want no Eve, replit or Antigravity", got)
+	}
+	if len(rep.Results) != 20 {
+		t.Errorf("results = %d, want 20 (cursor plus the 19 other auto-added universal agents)", len(rep.Results))
+	}
+}
+
+func TestAddExplicitAgentsBypassDetection(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := testEnv(project)
+	env.AgentEnv = agents.Environment{
+		GOOS: "linux", Home: home, Cwd: project, Vars: map[string]string{},
+		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
+	}
+	rep, err := Add(AddOptions{Source: newSource(t), Agents: []string{"eve"}, Yes: true}, env)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Agent != "eve" {
+		t.Fatalf("results = %+v, want only eve", rep.Results)
+	}
+	if rep.Results[0].Status != install.Installed {
+		t.Errorf("eve = %+v, want installed", rep.Results[0])
+	}
+	if _, err := os.Stat(filepath.Join(project, "agent", "skills", "flat.md")); err != nil {
+		t.Errorf("eve flat file missing: %v", err)
+	}
+	lock, err := lockfile.Load(filepath.Join(project, lockfile.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := lock.Get("flat"); !ok || e.ComputedHash == "" {
+		t.Errorf("lock entry = %+v, want a hash for the flat file", e)
+	}
+}
+
+func TestAddNothingDetectedInstallsEveryAgent(t *testing.T) {
+	project := t.TempDir()
+	env := testEnv(project)
+	env.AgentEnv = agents.Environment{
+		GOOS: "linux", Home: t.TempDir(), Cwd: project, Vars: map[string]string{},
+		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
+	}
+	rep, err := Add(AddOptions{Source: newSource(t), Yes: true}, env)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(rep.Results) != 79 {
+		t.Errorf("results = %d, want one per agent", len(rep.Results))
+	}
+	if rep.Failed() {
+		t.Errorf("results failed: %+v", rep.Results)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "skills", "flat", "SKILL.md")); err != nil {
+		t.Errorf("canonical copy missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "flat")); err != nil {
+		t.Errorf("Claude Code directory not created: %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/app"
 	"github.com/nhermosilla14/go-skills/internal/cli"
 )
@@ -56,6 +57,7 @@ func runAdd(opts app.AddOptions, stdout, stderr io.Writer) int {
 		IsTTY:           isTerminal(os.Stdin),
 		IncludeInternal: internalSkillsEnabled(),
 		Now:             time.Now,
+		AgentEnv:        agents.FromOS(workDir),
 	}
 	rep, err := app.Add(opts, env)
 	for _, w := range rep.Warnings {

@@ -27,11 +27,12 @@ func newSkill(t *testing.T, project, name string) skill.Skill {
 	return skill.Skill{Name: name, Dir: dir, RelDir: "src/" + name}
 }
 
-func allAgents(t *testing.T) []agents.Agent {
+// twoAgents share two distinct project skill directories, so plans use symlink mode.
+func twoAgents(t *testing.T) []agents.Agent {
 	t.Helper()
-	selected, invalid := agents.Expand([]string{"*"})
+	selected, invalid := agents.Expand([]string{"opencode", "claude-code"})
 	if len(invalid) != 0 || len(selected) != 2 {
-		t.Fatalf("Expand(*) = %v, invalid %v", selected, invalid)
+		t.Fatalf("Expand = %v, invalid %v", selected, invalid)
 	}
 	return selected
 }
@@ -39,7 +40,7 @@ func allAgents(t *testing.T) []agents.Agent {
 func TestPlanSymlinkForTwoDirs(t *testing.T) {
 	project := t.TempDir()
 	s := newSkill(t, project, "alpha")
-	entries := Plan(project, []skill.Skill{s}, allAgents(t), false, "")
+	entries := Plan(project, []skill.Skill{s}, twoAgents(t), PlanOptions{})
 
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
@@ -57,8 +58,8 @@ func TestPlanSymlinkForTwoDirs(t *testing.T) {
 		paths = append(paths, tg.Path)
 	}
 	want := []string{
-		filepath.Join(project, ".agents", "skills", "alpha"),
 		filepath.Join(project, ".claude", "skills", "alpha"),
+		filepath.Join(project, ".agents", "skills", "alpha"),
 	}
 	if !reflect.DeepEqual(paths, want) {
 		t.Errorf("target paths = %v, want %v", paths, want)
@@ -69,7 +70,7 @@ func TestPlanCopyForOneDir(t *testing.T) {
 	project := t.TempDir()
 	s := newSkill(t, project, "alpha")
 	selected, _ := agents.Expand([]string{"claude-code"})
-	entries := Plan(project, []skill.Skill{s}, selected, false, "")
+	entries := Plan(project, []skill.Skill{s}, selected, PlanOptions{})
 	e := entries[0]
 	if e.Mode != ModeCopy || e.Canonical != "" {
 		t.Errorf("Mode = %s, Canonical = %q; want copy without canonical", e.Mode, e.Canonical)
@@ -82,7 +83,7 @@ func TestPlanCopyForOneDir(t *testing.T) {
 func TestPlanForceCopyAndSortedByName(t *testing.T) {
 	project := t.TempDir()
 	skills := []skill.Skill{newSkill(t, project, "zeta"), newSkill(t, project, "alpha")}
-	entries := Plan(project, skills, allAgents(t), true, "")
+	entries := Plan(project, skills, twoAgents(t), PlanOptions{ForceCopy: true})
 	if entries[0].Name != "alpha" || entries[1].Name != "zeta" {
 		t.Errorf("order = %s, %s; want alpha, zeta", entries[0].Name, entries[1].Name)
 	}
@@ -97,7 +98,7 @@ func TestPlanForceCopyAndSortedByName(t *testing.T) {
 func TestPlanForcedCopyWhenCopyIsAlreadyTheDefault(t *testing.T) {
 	project := t.TempDir()
 	selected, _ := agents.Expand([]string{"claude-code"})
-	entries := Plan(project, []skill.Skill{newSkill(t, project, "alpha")}, selected, true, "")
+	entries := Plan(project, []skill.Skill{newSkill(t, project, "alpha")}, selected, PlanOptions{ForceCopy: true})
 	if entries[0].ForcedCopy {
 		t.Error("ForcedCopy = true, want false: a single agent directory is copy by default")
 	}
@@ -109,7 +110,7 @@ func TestApplySymlinkModeLinksRelatively(t *testing.T) {
 	}
 	project := t.TempDir()
 	s := newSkill(t, project, "alpha")
-	results := Apply(project, Plan(project, []skill.Skill{s}, allAgents(t), false, ""))
+	results := Apply(project, Plan(project, []skill.Skill{s}, twoAgents(t), PlanOptions{}))
 
 	for _, r := range results {
 		if r.Status != Installed {
@@ -143,7 +144,7 @@ func TestApplyCopyModeWritesIndependentFiles(t *testing.T) {
 	project := t.TempDir()
 	s := newSkill(t, project, "alpha")
 	selected, _ := agents.Expand([]string{"claude-code"})
-	results := Apply(project, Plan(project, []skill.Skill{s}, selected, false, ""))
+	results := Apply(project, Plan(project, []skill.Skill{s}, selected, PlanOptions{}))
 	if len(results) != 1 || results[0].Status != Installed || results[0].Mode != ModeCopy {
 		t.Fatalf("results = %+v", results)
 	}
@@ -165,7 +166,7 @@ func TestApplyReplacesOldInstallAndDropsStaleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected, _ := agents.Expand([]string{"claude-code"})
-	Apply(project, Plan(project, []skill.Skill{s}, selected, false, ""))
+	Apply(project, Plan(project, []skill.Skill{s}, selected, PlanOptions{}))
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Errorf("stale file survived reinstall: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestApplySkipsWhenSourceIsDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected, _ := agents.Expand([]string{"claude-code"})
-	results := Apply(project, Plan(project, []skill.Skill{s}, selected, false, ""))
+	results := Apply(project, Plan(project, []skill.Skill{s}, selected, PlanOptions{}))
 	if results[0].Status != Skipped {
 		t.Fatalf("status = %s, want skipped (%s)", results[0].Status, results[0].Message)
 	}
@@ -196,7 +197,7 @@ func TestApplyRefusesCategoryDirectory(t *testing.T) {
 	project := t.TempDir()
 	s := newSkill(t, project, "alpha")
 	selected, _ := agents.Expand([]string{"claude-code"})
-	entries := Plan(project, []skill.Skill{s}, selected, false, "")
+	entries := Plan(project, []skill.Skill{s}, selected, PlanOptions{})
 	entries[0].Targets[0].Path = filepath.Join(project, ".claude", "skills", ".system")
 	results := Apply(project, entries)
 	if results[0].Status != Failed || !strings.Contains(results[0].Message, "category") {

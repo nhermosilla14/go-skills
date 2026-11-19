@@ -43,6 +43,7 @@ type Env struct {
 	IsTTY           bool   // whether stdin is a terminal
 	IncludeInternal bool   // install skills marked metadata.internal
 	Now             func() time.Time
+	AgentEnv        agents.Environment // home, OS and variables used by detection and paths
 }
 
 // Report is the outcome of an add run, for the CLI to render.
@@ -66,7 +67,8 @@ func (r Report) Failed() bool {
 // Add installs the skills of a local source into the project. The flow is: validate agents,
 // resolve the source, discover, stop for --list, require -y, select, plan, apply, record.
 func Add(opts AddOptions, env Env) (Report, error) {
-	selected, err := selectAgents(opts.Agents)
+	agentEnv := env.agentsEnv()
+	selected, err := selectAgents(opts.Agents, agentEnv, opts.Yes)
 	if err != nil {
 		return Report{}, err
 	}
@@ -104,7 +106,11 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	entries := install.Plan(env.WorkDir, chosen, selected, opts.Copy, opts.Rename)
+	entries := install.Plan(env.WorkDir, chosen, selected, install.PlanOptions{
+		Env:       agentEnv,
+		ForceCopy: opts.Copy,
+		Rename:    opts.Rename,
+	})
 	rep.Results = install.Apply(env.WorkDir, entries)
 	saved, err := recordInstalled(lock, lockPath, recordInput{
 		project: env.WorkDir,
@@ -121,10 +127,11 @@ func Add(opts AddOptions, env Env) (Report, error) {
 	return rep, nil
 }
 
-// selectAgents resolves the requested agent identifiers. No identifiers selects every agent.
-func selectAgents(ids []string) ([]agents.Agent, error) {
+// selectAgents resolves the requested agent identifiers. No identifiers uses detection when
+// installing non-interactively, and the interactive starting set otherwise.
+func selectAgents(ids []string, env agents.Environment, yes bool) ([]agents.Agent, error) {
 	if len(ids) == 0 {
-		return agents.All(), nil
+		return agents.Select(env, yes), nil
 	}
 	selected, invalid := agents.Expand(ids)
 	if len(invalid) > 0 {
@@ -132,6 +139,20 @@ func selectAgents(ids []string) ([]agents.Agent, error) {
 			strings.Join(invalid, ", "), strings.Join(agents.IDs(), ", "))
 	}
 	return selected, nil
+}
+
+// agentsEnv fills the environment from the process when the caller passed none, so detection sees
+// the real home and variables. A partially filled environment is used as given.
+func (e Env) agentsEnv() agents.Environment {
+	env := e.AgentEnv
+	if env.Home == "" && env.Vars == nil && env.GOOS == "" &&
+		env.ApplicationsDir == "" && env.EtcDir == "" {
+		env = agents.FromOS(e.WorkDir)
+	}
+	if env.Cwd == "" {
+		env.Cwd = e.WorkDir
+	}
+	return env
 }
 
 // sourceDir resolves a source argument to an absolute directory.
@@ -207,7 +228,7 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 		if !ok || failedAny(in.results, e.Name) {
 			continue
 		}
-		digest, err := hash.Dir(loc)
+		digest, err := hashInstalled(loc)
 		if err != nil {
 			return false, fmt.Errorf("hashing %s: %w", e.Name, err)
 		}
@@ -238,6 +259,19 @@ func lockEntry(in recordInput, e install.Entry, digest string, lock *lockfile.Fi
 		entry.InstallMode = "copy"
 	}
 	return entry
+}
+
+// hashInstalled hashes the installed skill: a directory normally, and the flat markdown file Eve
+// writes.
+func hashInstalled(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return hash.Dir(path)
+	}
+	return hash.SingleFile(path)
 }
 
 // installedPath returns where the skill was first installed successfully.
