@@ -116,6 +116,48 @@ Defaults when unset: `yes=false`, `copy=false`, `dryRun=false`, `cleanup` treate
 17. **Install remote `skills`-field sources** (`:972-1024`).
 18. **Report** (`:1026-1062`), telemetry (`:1064-1070`), outro.
 
+### 2.4 Planning algorithm, condensed
+
+```
+sync(cwd, opts):
+  pkg = read(cwd/package.json)            # absent -> no packaged skills, no remote entries
+  projects = [{name:'.', dir:cwd, pkg, depth:0}]
+  if opts.recursive: projects += workspacePackages(cwd, pkg) at depth 1
+
+  declarers = []                          # visited in insertion order; the list grows while iterating
+  for project in projects:
+      deps = keys(dependencies, devDependencies, optionalDependencies, peerDependencies)
+      for name in deps:
+          dir = findInstalledPackage(project.dir, name)      # walk up node_modules
+          if dir: discovered += discoverPackageSkills(dir, name, project.depth)
+                  declarers += {name, dir, depth: project.depth + 1}
+      declarers += {project.name, project.dir, depth: project.depth}
+
+  visitedReal = {}
+  for declarer in declarers:                                 # includes appended entries
+      real = realpath(declarer.dir); if !real or visitedReal[real]: continue
+      visitedReal[real] = true
+      field = read(real/package.json).skills
+      problems go to errors when declarer.name == '.', else warnings
+      if field is not an array: only the project errors
+      for req in parseSkillsField(field, declarer.name).npm:
+          target = findInstalledPackage(real, req.package)
+          if !target: problem (error for '.', warning otherwise); continue
+          discovered += discoverPackageSkills(target, req.package, declarer.depth)
+                        filtered by req.skills, via = declarer.name
+          declarers += {req.package, target, depth: declarer.depth + 1}
+      for req in parseSkillsField(...).remote:
+          remote[key(url, ref, subpath, skills)] += declarer.name
+
+  dedupe discovered by realpath(skill.path)
+  discovered = applyIncludeExclude(discovered)               # also defines the cleanup keep-set
+  remote     = filterRemoteRequests(remote)                  # declarer + skill patterns
+  return {discovered, remote, warnings, errors}
+```
+
+Then, in order: prune stale lock entries (§8), drop already-installed remote requests, collect cached
+remote skills, select agents, resolve conflicts (§6), frozen validation (§11), install, write lock.
+
 `runSync` takes an `args` parameter that it never reads (`:637`): option parsing happens in the CLI
 wrapper. **(observed)**
 
@@ -905,7 +947,7 @@ contract. Entry point is `src/index.ts`, which lists every export by name; ESM o
 | `resolveSource(source, options?)` | `(string, ResolveOptions) => SkillSource` | Parse + fetch + discover, no install. Caller must `dispose()`. |
 | `installSkills(source, options?)` | `(string \| SkillSource, InstallOptions) => InstallResult` | Fetch (if string), select, install to agents, optionally record lock, optionally telemetry. |
 | `listSkills(options?)` | `ListOptions => ListResult` | Scan disk for project/global/both; join lock source/`renamedFrom`. |
-| `removeSkills(names, options?)` | `(string[], RemoveOptions) => RemoveResult` | Remove from agents, keep shared copies still in use, update lock. |
+| `removeSkills(names, options?)` | `(string[], RemoveOptions) => RemoveResult` | Remove from agents; keep a shared copy and lock entry while another installed agent still uses it; update lock. |
 | `version` | `string` | `package.json` version. |
 | `diagnostics`, `isDiagnostic` | diagnostic catalog | Error codes/constructors. |
 

@@ -1,0 +1,51 @@
+name: merge gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  branch-docs:
+    name: branch docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Check branch records are mergeable
+        run: bash scripts/check-branch-docs.sh
+
+  build-and-test:
+    name: build and test
+    runs-on: ubuntu-latest
+    # TODO: the Go steps below activate once go.mod lands; until then setup-go fails
+    # because go-version-file points at a file that does not exist yet.
+    continue-on-error: false
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
