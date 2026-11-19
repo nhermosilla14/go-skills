@@ -10,13 +10,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // ErrOutsideRoot reports a path that is not inside the root it must stay within.
 var ErrOutsideRoot = errors.New("path is outside the allowed root")
 
 // WriteFileAtomic writes data to path through a temporary file in the same directory, fsyncs it
-// and renames it over path, so readers see either the old or the new content.
+// and renames it over path, so readers see either the old or the new content. On Windows a rename
+// that fails with a sharing violation is retried a few times.
 func WriteFileAtomic(path string, data []byte, perm fs.FileMode) (err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
@@ -41,7 +43,23 @@ func WriteFileAtomic(path string, data []byte, perm fs.FileMode) (err error) {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return renameWithRetry(tmpName, path)
+}
+
+// renameWithRetry renames tmp over path. A Windows sharing violation is retried for a short while;
+// other platforms rename once.
+func renameWithRetry(tmp, path string) error {
+	err := os.Rename(tmp, path)
+	if err == nil || runtime.GOOS != "windows" {
+		return err
+	}
+	for attempt := 1; attempt <= 4; attempt++ {
+		time.Sleep(time.Duration(15*attempt) * time.Millisecond)
+		if err = os.Rename(tmp, path); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // Within reports whether path is root or lies below it. Both paths must be absolute. On Windows

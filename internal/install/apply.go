@@ -36,9 +36,10 @@ type linker func(link, target string) error
 
 // Apply executes the plan entry by entry and returns one result per skill and agent. Targets that
 // share a directory are written once and reported once per agent. A failure is reported, not
-// rolled back.
-func Apply(projectDir string, entries []Entry) []Result {
-	return applyWith(projectDir, entries, platformLink)
+// rolled back. scopeRoot is the directory removals must stay inside (the project for a project
+// install, the home directory for a global one).
+func Apply(scopeRoot string, entries []Entry) []Result {
+	return applyWith(scopeRoot, entries, platformLink)
 }
 
 func applyWith(projectDir string, entries []Entry, link linker) []Result {
@@ -49,23 +50,23 @@ func applyWith(projectDir string, entries []Entry, link linker) []Result {
 	return results
 }
 
-func applyEntry(projectDir string, e Entry, link linker) []Result {
+func applyEntry(scopeRoot string, e Entry, link linker) []Result {
 	if e.Mode == ModeCopy {
-		return applyCopies(projectDir, e)
+		return applyCopies(scopeRoot, e)
 	}
-	return applySymlinks(projectDir, e, link)
+	return applySymlinks(scopeRoot, e, link)
 }
 
 // applyCopies writes one copy per distinct destination. Eve's flat target is written as a file.
-func applyCopies(projectDir string, e Entry) []Result {
+func applyCopies(scopeRoot string, e Entry) []Result {
 	return forEachDistinctTarget(e, func(t Target) Result {
-		return copyTarget(projectDir, e, t)
+		return copyTarget(scopeRoot, e, t)
 	})
 }
 
 // applySymlinks writes the canonical copy, then links every agent directory to it. Eve is always
 // a flat copy and never a link.
-func applySymlinks(projectDir string, e Entry, link linker) []Result {
+func applySymlinks(scopeRoot string, e Entry, link linker) []Result {
 	prepare := func(err error) []Result {
 		results := make([]Result, 0, len(e.Targets))
 		for _, t := range e.Targets {
@@ -76,15 +77,25 @@ func applySymlinks(projectDir string, e Entry, link linker) []Result {
 	if e.Canonical == "" {
 		return prepare(errors.New("symlink install without a canonical directory"))
 	}
-	if err := replaceDir(projectDir, e.Skill.Dir, e.Canonical); err != nil {
+	if err := replaceDir(removalRoot(scopeRoot, e.Canonical), e.Skill.Dir, e.Canonical); err != nil {
 		return prepare(err)
 	}
 	if err := renameInstalled(e.RenameTo, e.Canonical); err != nil {
 		return prepare(err)
 	}
 	return forEachDistinctTarget(e, func(t Target) Result {
-		return linkTarget(projectDir, e, t, link)
+		return linkTarget(scopeRoot, e, t, link)
 	})
+}
+
+// removalRoot is the directory a destination must be removed within: the scope root when the
+// destination lies inside it, and the destination's parent otherwise, which is how a global
+// directory relocated by an environment variable stays removable.
+func removalRoot(scopeRoot, dst string) string {
+	if scopeRoot != "" && fsutil.Within(scopeRoot, dst) {
+		return scopeRoot
+	}
+	return filepath.Dir(dst)
 }
 
 // forEachDistinctTarget applies write to one target per distinct real path and repeats the outcome
@@ -145,16 +156,16 @@ func missingProjectDir(projectDir string, t Target) bool {
 	return err != nil || !info.IsDir()
 }
 
-func copyTarget(projectDir string, e Entry, t Target) Result {
+func copyTarget(scopeRoot string, e Entry, t Target) Result {
 	res := newResult(e, t, ModeCopy)
 	if t.Flat {
-		if err := writeFlatSkill(projectDir, e, t.Path); err != nil {
+		if err := writeFlatSkill(removalRoot(scopeRoot, t.Path), e, t.Path); err != nil {
 			return failure(res, err)
 		}
 		res.Status = Installed
 		return res
 	}
-	if err := replaceDir(projectDir, e.Skill.Dir, t.Path); err != nil {
+	if err := replaceDir(removalRoot(scopeRoot, t.Path), e.Skill.Dir, t.Path); err != nil {
 		return failure(res, err)
 	}
 	if err := renameInstalled(e.RenameTo, t.Path); err != nil {
@@ -166,15 +177,15 @@ func copyTarget(projectDir string, e Entry, t Target) Result {
 
 // linkTarget points the agent directory at the canonical copy. Eve flat files and failed links
 // fall back to copies, with the reason in the message.
-func linkTarget(projectDir string, e Entry, t Target, link linker) Result {
+func linkTarget(scopeRoot string, e Entry, t Target, link linker) Result {
 	res := newResult(e, t, ModeSymlink)
 	if t.Flat {
-		return copyTarget(projectDir, e, t)
+		return copyTarget(scopeRoot, e, t)
 	}
 	if categoryDirs[filepath.Base(t.Path)] {
 		return failure(res, fmt.Errorf("%s: %w", t.Path, ErrCategoryDir))
 	}
-	if missingProjectDir(projectDir, t) {
+	if !e.Global && missingProjectDir(scopeRoot, t) {
 		res.Status = Skipped
 		res.Message = "project directory not found"
 		return res
@@ -198,7 +209,7 @@ func linkTarget(projectDir string, e Entry, t Target, link linker) Result {
 	if overlap {
 		return failure(res, fmt.Errorf("%s: %w", t.Path, ErrOverlap))
 	}
-	if err := linkOrCopy(projectDir, e, t, &res, link); err != nil {
+	if err := linkOrCopy(removalRoot(scopeRoot, t.Path), e, t, &res, link); err != nil {
 		return failure(res, err)
 	}
 	res.Status = Installed
@@ -207,11 +218,11 @@ func linkTarget(projectDir string, e Entry, t Target, link linker) Result {
 
 // linkOrCopy replaces t.Path with a link to the canonical copy, falling back to a copy when the
 // platform or the filesystem refuses links. res.Mode and res.Message record the fallback.
-func linkOrCopy(projectDir string, e Entry, t Target, res *Result, link linker) error {
+func linkOrCopy(root string, e Entry, t Target, res *Result, link linker) error {
 	if err := fsutil.EnsureDir(filepath.Dir(t.Path)); err != nil {
 		return err
 	}
-	if err := fsutil.RemoveAllWithin(projectDir, t.Path); err != nil {
+	if err := fsutil.RemoveAllWithin(root, t.Path); err != nil {
 		return err
 	}
 	err := link(t.Path, e.Canonical)
@@ -220,7 +231,7 @@ func linkOrCopy(projectDir string, e Entry, t Target, res *Result, link linker) 
 	}
 	res.Message = fmt.Sprintf("link failed (%v); copied instead", err)
 	res.Mode = ModeCopy
-	if err := replaceDir(projectDir, e.Skill.Dir, t.Path); err != nil {
+	if err := replaceDir(root, e.Skill.Dir, t.Path); err != nil {
 		return err
 	}
 	return renameInstalled(e.RenameTo, t.Path)
@@ -228,7 +239,7 @@ func linkOrCopy(projectDir string, e Entry, t Target, res *Result, link linker) 
 
 // writeFlatSkill writes Eve's flat <name>.md: the skill's SKILL.md with the frontmatter reduced to
 // the keys Eve keeps, and the installed name when --rename was used.
-func writeFlatSkill(projectDir string, e Entry, dst string) error {
+func writeFlatSkill(root string, e Entry, dst string) error {
 	overlap, err := overlaps(e.Skill.Dir, dst)
 	if err != nil {
 		return err
@@ -247,7 +258,7 @@ func writeFlatSkill(projectDir string, e Entry, dst string) error {
 	if err := fsutil.EnsureDir(filepath.Dir(dst)); err != nil {
 		return err
 	}
-	if err := fsutil.RemoveAllWithin(projectDir, dst); err != nil {
+	if err := fsutil.RemoveAllWithin(root, dst); err != nil {
 		return err
 	}
 	return fsutil.WriteFileAtomic(dst, out, 0o644)

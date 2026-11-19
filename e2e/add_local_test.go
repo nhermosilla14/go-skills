@@ -26,6 +26,21 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// Every end-to-end run must be blind to the developer's real home and global skills. A test
+	// that once ran `update -g` against the real home rewrote global skills; isolating HOME and
+	// the XDG/Windows config roots here makes that impossible for the whole package.
+	home, err := os.MkdirTemp("", "skills-e2e-home-")
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		panic(err)
+	}
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
+		if err := os.Setenv(key, filepath.Join(home, key)); err != nil {
+			_ = os.RemoveAll(dir)
+			_ = os.RemoveAll(home)
+			panic(err)
+		}
+	}
 	name := "skills"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -41,6 +56,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
 

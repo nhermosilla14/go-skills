@@ -21,9 +21,9 @@ type Scope string
 const (
 	// ScopeProject installs into the project directory.
 	ScopeProject Scope = "project"
-	// ScopeGlobal installs into the user's home directory. Not implemented yet.
+	// ScopeGlobal installs into the user's home directory.
 	ScopeGlobal Scope = "global"
-	// ScopeBoth updates both scopes. Not implemented yet.
+	// ScopeBoth updates both scopes. Not supported yet.
 	ScopeBoth Scope = "both"
 )
 

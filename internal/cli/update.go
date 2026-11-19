@@ -36,7 +36,7 @@ func WriteUpdate(w io.Writer, rep app.UpdateReport) {
 	for _, note := range rep.Notes {
 		fmt.Fprintln(w, displayText(note))
 	}
-	writeUncheckable(w, rep.Uncheckable)
+	writeUncheckable(w, rep.Uncheckable, rep.Scope == string(app.ScopeGlobal))
 	if updated > 0 {
 		fmt.Fprintf(w, "Updated %d skill(s)\n", updated)
 	}
@@ -44,13 +44,17 @@ func WriteUpdate(w io.Writer, rep app.UpdateReport) {
 		fmt.Fprintf(w, "Failed to update %d skill(s)\n", failed)
 	}
 	if !rep.NothingToUpdate && !rep.Changed() && !rep.Skipped() && !rep.Failed() {
+		if rep.Scope == string(app.ScopeGlobal) {
+			fmt.Fprintln(w, "✓ All global skills are up to date")
+			return
+		}
 		fmt.Fprintln(w, "✓ All project skills are up to date")
 	}
 }
 
 // writeUncheckable prints the entries that cannot be checked automatically, grouped by the source
 // whose reinstall command refreshes them.
-func writeUncheckable(w io.Writer, entries []app.UncheckableSkill) {
+func writeUncheckable(w io.Writer, entries []app.UncheckableSkill, global bool) {
 	if len(entries) == 0 {
 		return
 	}
@@ -65,7 +69,11 @@ func writeUncheckable(w io.Writer, entries []app.UncheckableSkill) {
 		seen[entry.Source] = true
 		sources = append(sources, entry.Source)
 	}
+	scope := ""
+	if global {
+		scope = " -g"
+	}
 	for _, source := range sources {
-		fmt.Fprintf(w, "To update: skills add %s -y\n", displayText(source))
+		fmt.Fprintf(w, "To update: skills add %s%s -y\n", displayText(source), scope)
 	}
 }

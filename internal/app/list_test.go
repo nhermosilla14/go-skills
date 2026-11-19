@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -330,15 +329,5 @@ func TestListCorruptLockIsAWarning(t *testing.T) {
 	}
 	if got := listByName(rep)["alpha"].Status; got != StatusUntracked {
 		t.Errorf("status = %q, want untracked with an unreadable lock", got)
-	}
-}
-
-func TestListRejectsGlobalScope(t *testing.T) {
-	_, err := List(ListOptions{Global: true}, testEnv(t.TempDir()))
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("err = %v, want ErrUsage", err)
-	}
-	if !strings.Contains(err.Error(), "global scope is not supported yet") {
-		t.Errorf("err = %v", err)
 	}
 }

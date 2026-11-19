@@ -128,7 +128,7 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 
 func TestLoadRejectsOtherVersionsAndBrokenFiles(t *testing.T) {
 	tests := map[string]string{
-		"version 1":      `{"version":1,"skills":{}}`,
+		"version 3":      `{"version":3,"skills":{}}`,
 		"no version":     `{"skills":{}}`,
 		"no skills":      `{"version":2}`,
 		"not json":       `<<<<<<< HEAD`,

@@ -40,7 +40,7 @@ type AddOptions struct {
 	FullDepth bool     // search every subdirectory, even below a root SKILL.md
 	Rename    string   // install one skill under this name
 	Subagents []string // Eve subagent targets; parsed but not installed yet
-	Global    bool     // global scope; only reachable from the library, the parser rejects -g
+	Global    bool     // install into the user home and the global lock
 }
 
 // Env carries what the use case needs from the process. Now must not be nil.
@@ -126,8 +126,9 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	if answers.Scope == ScopeGlobal {
-		return rep, errors.New("global installs are not implemented yet; install into the project instead")
+	global := opts.Global || answers.Scope == ScopeGlobal
+	if global {
+		rep.Scope = string(ScopeGlobal)
 	}
 	requested := requestedSkills(opts.Skills, src.SkillSelector)
 	chosen, err := chooseSkills(opts, tree, src, env.IncludeInternal, &found, requested, questions, answers)
@@ -145,27 +146,49 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if hasStep(questions, StepConfirm) && !answers.Proceed {
 		return rep, ErrCancelled
 	}
-	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
-	lock, err := lockfile.Load(lockPath)
+
+	namedAgents := specificAgentSelection(opts.Agents) || specificAgentSelection(answers.Agents)
+	var failedAgents []agents.Agent
+	if global {
+		selected, failedAgents = splitGlobalAgents(selected, agentEnv)
+		if len(failedAgents) > 0 && !namedAgents && len(selected) > 0 {
+			rep.Warnings = append(rep.Warnings,
+				"Skipping "+agentNames(failedAgents)+": no global skills directory")
+			failedAgents = nil
+		}
+	}
+
+	lockPath, projectLock, globalLock, err := loadScopeLock(env, agentEnv, global)
 	if err != nil {
 		return rep, err
+	}
+	scopeRoot := env.WorkDir
+	if global {
+		scopeRoot = agentEnv.Home
 	}
 	entries := install.Plan(env.WorkDir, chosen, selected, install.PlanOptions{
 		Env:       agentEnv,
 		ForceCopy: opts.Copy || answers.Mode == install.ModeCopy,
-		Global:    opts.Global,
+		Global:    global,
 		Rename:    opts.Rename,
 	})
-	rep.Results = install.Apply(env.WorkDir, entries)
+	rep.Results = install.Apply(scopeRoot, entries)
+	rep.Results = append(rep.Results, globalFailures(entries, failedAgents)...)
 	rep.Hashes = map[string]string{}
-	saved, err := recordInstalled(lock, lockPath, recordInput{
-		project: env.WorkDir,
-		source:  src,
-		root:    tree.Dir,
-		commit:  tree.Commit,
-		entries: entries,
-		results: rep.Results,
-		hashes:  rep.Hashes,
+	saveAgents := global && len(selected) > 0 && (len(opts.Agents) == 0 || len(answers.Agents) > 0)
+	saved, err := recordScope(projectLock, globalLock, lockPath, recordInput{
+		project:    env.WorkDir,
+		source:     src,
+		root:       tree.Dir,
+		commit:     tree.Commit,
+		entries:    entries,
+		results:    rep.Results,
+		hashes:     rep.Hashes,
+		global:     global,
+		now:        env.now(),
+		warnings:   &rep.Warnings,
+		saveAgents: saveAgents,
+		agents:     agentIDs(selected),
 	})
 	if err != nil {
 		return rep, err
@@ -412,17 +435,32 @@ func validateRename(name string, chosen []skill.Skill) error {
 }
 
 type recordInput struct {
-	project string
-	source  source.Source
-	root    string
-	commit  string
-	entries []install.Entry
-	results []install.Result
-	hashes  map[string]string
+	project    string
+	source     source.Source
+	root       string
+	commit     string
+	entries    []install.Entry
+	results    []install.Result
+	hashes     map[string]string
+	global     bool
+	now        time.Time
+	warnings   *[]string
+	saveAgents bool
+	agents     []string
+}
+
+// recordScope saves the installs in the lock of the scope. It reports whether the file was written.
+func recordScope(projectLock *lockfile.File, globalLock *lockfile.GlobalFile, lockPath string,
+	in recordInput) (bool, error) {
+	if in.global {
+		return recordGlobal(globalLock, lockPath, in)
+	}
+	return recordInstalled(projectLock, lockPath, in)
 }
 
 // recordInstalled adds every skill that landed for at least one agent and failed for none to the
-// lock, then saves the lock if anything was recorded. It reports whether the file was written.
+// project lock, then saves the lock if anything was recorded. It reports whether the file was
+// written.
 func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool, error) {
 	recorded := false
 	for _, e := range in.entries {
@@ -447,6 +485,124 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 		return false, err
 	}
 	return true, nil
+}
+
+// recordGlobal adds every skill that landed for at least one agent and failed for none to the
+// global lock. installedAt is kept from an earlier entry, updatedAt refreshes, and the agent
+// selection is saved when the run chose agents itself.
+func recordGlobal(lock *lockfile.GlobalFile, lockPath string, in recordInput) (bool, error) {
+	recorded := false
+	for _, e := range in.entries {
+		loc, ok := installedPath(in.results, e.Name)
+		if !ok || failedAny(in.results, e.Name) {
+			continue
+		}
+		entry := globalLockEntry(in, e, lock)
+		digest, warning, err := globalFolderHash(entry, loc)
+		if err != nil {
+			return false, fmt.Errorf("hashing %s: %w", e.Name, err)
+		}
+		if warning != "" && in.warnings != nil {
+			*in.warnings = append(*in.warnings, warning)
+		}
+		entry.SkillFolderHash = digest
+		if in.hashes != nil {
+			in.hashes[e.Name] = digest
+		}
+		lock.Put(e.Name, entry)
+		recorded = true
+	}
+	if in.saveAgents {
+		lock.SetLastSelectedAgents(in.agents)
+	}
+	if !recorded && !in.saveAgents {
+		return false, nil
+	}
+	if err := lock.Save(lockPath); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// globalLockEntry builds the global record for one installed skill, keeping installedAt from an
+// earlier install of the same name.
+func globalLockEntry(in recordInput, e install.Entry, lock *lockfile.GlobalFile) lockfile.GlobalEntry {
+	entry := lockfile.GlobalEntry{
+		SourceType:  string(in.source.Kind),
+		InstalledAt: timestamp(in.now),
+		UpdatedAt:   timestamp(in.now),
+	}
+	if in.source.Kind == source.KindLocal {
+		entry.Source = filepath.ToSlash(in.source.Source)
+	} else {
+		entry.Source = in.source.Source
+		entry.SourceType = lockSourceType(in.source.Kind)
+		if in.source.SourceURL != "" && in.source.Kind != source.KindGitHub {
+			entry.SourceURL = in.source.SourceURL
+		}
+		entry.Ref = in.source.Ref
+		entry.Commit = in.commit
+		entry.SkillPath = e.Skill.SkillPath()
+	}
+	if prev, ok := lock.Get(e.Name); ok && prev.InstalledAt != "" {
+		entry.InstalledAt = prev.InstalledAt
+	}
+	if e.RenameTo != "" && e.RenameTo != e.Skill.Name {
+		entry.SkillName = e.Skill.Name
+	}
+	if e.ForcedCopy {
+		entry.InstallMode = "copy"
+	}
+	return entry
+}
+
+// timestamp is the global lock's ISO 8601 form: UTC, with milliseconds.
+func timestamp(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// globalFolderHash is the skillFolderHash of a global entry: the GitHub tree SHA for a GitHub
+// source, and the content hash otherwise. When the Trees API fails, the installed content hash is
+// recorded and a warning explains why.
+func globalFolderHash(entry lockfile.GlobalEntry, installed string) (string, string, error) {
+	content, err := hashInstalled(installed)
+	if err != nil {
+		return "", "", err
+	}
+	if entry.SourceType != string(source.KindGitHub) || entry.Commit == "" {
+		return content, "", nil
+	}
+	tree, err := source.GitHubTreeHash(context.Background(), entry.Source, entry.Commit,
+		skillFolderDir(entry.SkillPath), githubAPIBase, githubToken())
+	if err == nil {
+		return tree, "", nil
+	}
+	return content, fmt.Sprintf(
+		"could not read the GitHub tree of %s: %v; recorded the content hash instead",
+		source.RedactCredentials(entry.Source), err), nil
+}
+
+// skillFolderDir is the folder a recorded SKILL.md path sits in, relative to the source root. An
+// empty result names the source root itself.
+func skillFolderDir(skillPath string) string {
+	dir := path.Dir(strings.ReplaceAll(skillPath, `\`, "/"))
+	if dir == "." || dir == "/" {
+		return ""
+	}
+	return strings.TrimPrefix(dir, "/")
+}
+
+// githubAPIBase overrides the GitHub API host in tests; an empty value uses the default.
+var githubAPIBase = ""
+
+// githubToken reads the optional API credential from the process environment. It is never printed.
+func githubToken() string {
+	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // lockEntry builds the lock record for one installed skill. installedAt keeps the value of an

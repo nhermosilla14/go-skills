@@ -1,5 +1,7 @@
 # Global scope and lock migration
 
+- Status: Done
+
 - Intents: 20261119-skill-management-and-scopes
 - ADRs: 20261119-lockfile-compatibility-and-write-policy, 20261119-package-architecture-and-dependencies
 

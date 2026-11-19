@@ -31,7 +31,7 @@ const (
 // ListOptions are the inputs of the list use case.
 type ListOptions struct {
 	Agents []string // agent identifiers, or "*"; empty lists every agent
-	Global bool     // global scope; not supported yet
+	Global bool     // read the global lock and agent directories
 }
 
 // SkillInfo is one skill of a list report, in the shape the CLI renders.
@@ -53,45 +53,44 @@ type ListReport struct {
 	Warnings []string
 }
 
-// List reports the installed project skills, their agents and how they compare with the lock. It
-// never writes anything.
+// List reports the installed skills of the scope, their agents and how they compare with the
+// lock. It never writes anything.
 func List(opts ListOptions, env Env) (ListReport, error) {
-	if opts.Global {
-		return ListReport{}, fmt.Errorf("%w: global scope is not supported yet", ErrUsage)
-	}
 	agentEnv := env.agentsEnv()
 	selected, err := listAgents(opts.Agents)
 	if err != nil {
 		return ListReport{}, err
 	}
 	filtered := len(opts.Agents) > 0
-	installed := scanInstalled(agentEnv, selected, filtered, env.IncludeInternal)
+	installed := scanInstalled(agentEnv, selected, filtered, env.IncludeInternal, opts.Global)
 
-	report := ListReport{Scope: string(ScopeProject)}
-	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
-	lock, err := lockfile.Load(lockPath)
-	if err != nil {
-		// Listing is read-only: a broken lock hides the sources but never fails the run.
-		report.Warnings = append(report.Warnings, fmt.Sprintf("ignoring %s: %v", lockPath, err))
-		lock = lockfile.New()
-	}
-	matched, missing := compareLock(lock, installed)
+	report := ListReport{Scope: scopeName(opts.Global)}
+	matched, missing := func() ([]comparedSkill, []missingSkill) {
+		if opts.Global {
+			lockPath := agents.GlobalLockPath(agentEnv)
+			lock, err := lockfile.LoadGlobal(lockPath)
+			if err != nil {
+				// Listing is read-only: a broken lock hides the sources but never fails the run.
+				report.Warnings = append(report.Warnings, fmt.Sprintf("ignoring %s: %v", lockPath, err))
+				lock = lockfile.NewGlobal()
+			}
+			return compareGlobalLock(lock, installed)
+		}
+		lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
+		lock, err := lockfile.Load(lockPath)
+		if err != nil {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("ignoring %s: %v", lockPath, err))
+			lock = lockfile.New()
+		}
+		return compareLock(lock, installed)
+	}()
 	for _, c := range matched {
 		report.Skills = append(report.Skills, skillInfo(c))
 	}
 	// A filtered scan hides other on-disk skills, so absence would be a false positive.
 	if !filtered {
-		for _, key := range missing {
-			entry, _ := lock.Get(key)
-			report.Skills = append(report.Skills, SkillInfo{
-				Name:        key,
-				Agents:      []string{},
-				Source:      entry.Source,
-				SourceURL:   entry.SourceURL,
-				SourceType:  entry.SourceType,
-				RenamedFrom: entry.SkillName,
-				Status:      StatusMissing,
-			})
+		for _, m := range missing {
+			report.Skills = append(report.Skills, missingInfo(m))
 		}
 	}
 	// Stable sorting by name over a deterministic scan keeps the agent order for equal names.
@@ -99,6 +98,44 @@ func List(opts ListOptions, env Env) (ListReport, error) {
 		return report.Skills[i].Name < report.Skills[j].Name
 	})
 	return report, nil
+}
+
+// scopeName is the report label of a scope.
+func scopeName(global bool) string {
+	if global {
+		return string(ScopeGlobal)
+	}
+	return string(ScopeProject)
+}
+
+// lockRef is the lock information list and removal display and update checking need, independent
+// of the lock version.
+type lockRef struct {
+	Source     string
+	SourceURL  string
+	SourceType string
+	SkillName  string
+	Ref        string
+	Commit     string
+}
+
+// missingSkill is a lock key with no directory on disk.
+type missingSkill struct {
+	Key string
+	Ref lockRef
+}
+
+// missingInfo describes a lock entry with no directory on disk.
+func missingInfo(m missingSkill) SkillInfo {
+	return SkillInfo{
+		Name:        m.Key,
+		Agents:      []string{},
+		Source:      m.Ref.Source,
+		SourceURL:   m.Ref.SourceURL,
+		SourceType:  m.Ref.SourceType,
+		RenamedFrom: m.Ref.SkillName,
+		Status:      StatusMissing,
+	}
 }
 
 // listAgents resolves the agent filter. No filter means every agent.
@@ -128,12 +165,12 @@ type scanDir struct {
 	agents []agents.Agent
 }
 
-// scanInstalled finds the installed skills in the project scope. It scans the canonical directory,
-// every agent skills directory that exists (including shared and legacy ones) and Eve's subagent
-// directories, deduplicating by resolved skill directory. With filtered set, only the selected
-// agents' directories are scanned.
-func scanInstalled(env agents.Environment, selected []agents.Agent, filtered, includeInternal bool) []installedSkill {
-	dirs := projectScanDirs(env, selected, filtered)
+// scanInstalled finds the installed skills in the scope. It scans the canonical directory, every
+// agent skills directory that exists (including shared and legacy project ones) and, in the project
+// scope, Eve's subagent directories, deduplicating by resolved skill directory. With filtered set,
+// only the selected agents' directories are scanned.
+func scanInstalled(env agents.Environment, selected []agents.Agent, filtered, includeInternal, global bool) []installedSkill {
+	dirs := scanDirs(env, selected, filtered, global)
 	seen := map[string]int{}
 	var out []installedSkill
 	for _, dir := range dirs {
@@ -165,6 +202,51 @@ func scanInstalled(env agents.Environment, selected []agents.Agent, filtered, in
 		}
 	}
 	return out
+}
+
+// scanDirs lists the skills directories to scan for the scope.
+func scanDirs(env agents.Environment, selected []agents.Agent, filtered, global bool) []scanDir {
+	if global {
+		return globalScanDirs(env, selected, filtered)
+	}
+	return projectScanDirs(env, selected, filtered)
+}
+
+// globalScanDirs lists the global skills directories: the canonical directory plus every agent's
+// own global directory, deduplicated in registry order.
+func globalScanDirs(env agents.Environment, selected []agents.Agent, filtered bool) []scanDir {
+	byPath := map[string][]agents.Agent{}
+	var order []string
+	add := func(path string, group []agents.Agent) {
+		clean := filepath.Clean(path)
+		if _, ok := byPath[clean]; !ok {
+			order = append(order, clean)
+		}
+		byPath[clean] = append(byPath[clean], group...)
+	}
+	if !filtered {
+		add(agents.CanonicalSkillsDir(env, true), nil)
+	}
+	for _, a := range selected {
+		primary := globalAgentDir(a, env)
+		if primary != "" {
+			add(primary, []agents.Agent{a})
+		}
+		// A universal agent that reads the canonical directory may still own a legacy global
+		// directory with older installs; both are listed.
+		if own := a.GlobalSkillsDir(env); own != "" && filepath.Clean(own) != filepath.Clean(primary) {
+			add(own, []agents.Agent{a})
+		}
+	}
+	dirs := make([]scanDir, 0, len(order))
+	for _, path := range order {
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		dirs = append(dirs, scanDir{path: path, agents: byPath[path]})
+	}
+	return dirs
 }
 
 // projectScanDirs lists the project skills directories to scan, canonical first, then the agent
@@ -263,29 +345,111 @@ type comparedSkill struct {
 	installedSkill
 	Status  Status
 	LockKey string // empty when the skill is untracked
-	Entry   lockfile.Entry
+	Ref     lockRef
 }
 
-// compareLock pairs installed skills with lock entries and lists the lock keys with no directory.
-func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSkill, []string) {
+// compareLock pairs installed project skills with lock entries and lists the keys with no folder.
+func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSkill, []missingSkill) {
 	matched := make([]comparedSkill, 0, len(installed))
 	used := map[string]bool{}
 	for _, s := range installed {
 		key, entry, ok := lookupEntry(lock, filepath.Base(s.Path), s.Name)
-		c := comparedSkill{installedSkill: s, Status: StatusUntracked, LockKey: key, Entry: entry}
+		c := comparedSkill{installedSkill: s, Status: StatusUntracked, LockKey: key}
 		if ok {
 			used[key] = true
 			c.Status = compareHash(s.Dir, entry)
+			c.Ref = lockRef{
+				Source:     entry.Source,
+				SourceURL:  entry.SourceURL,
+				SourceType: entry.SourceType,
+				SkillName:  entry.SkillName,
+				Ref:        entry.Ref,
+				Commit:     entry.Commit,
+			}
 		}
 		matched = append(matched, c)
 	}
-	var missing []string
+	var missing []missingSkill
 	for _, key := range lockKeys(lock) {
-		if !used[key] {
-			missing = append(missing, key)
+		if used[key] {
+			continue
 		}
+		entry, _ := lock.Get(key)
+		missing = append(missing, missingSkill{Key: key, Ref: lockRef{
+			Source: entry.Source, SourceURL: entry.SourceURL,
+			SourceType: entry.SourceType, SkillName: entry.SkillName,
+		}})
 	}
 	return matched, missing
+}
+
+// compareGlobalLock pairs installed global skills with global lock entries and lists the keys with
+// no folder.
+func compareGlobalLock(lock *lockfile.GlobalFile, installed []installedSkill) ([]comparedSkill, []missingSkill) {
+	matched := make([]comparedSkill, 0, len(installed))
+	used := map[string]bool{}
+	for _, s := range installed {
+		key, entry, ok := lookupGlobalEntry(lock, filepath.Base(s.Path), s.Name)
+		c := comparedSkill{installedSkill: s, Status: StatusUntracked, LockKey: key}
+		if ok {
+			used[key] = true
+			c.Status = globalStatus(key, s.Dir, entry)
+			c.Ref = globalRef(entry)
+		}
+		matched = append(matched, c)
+	}
+	var missing []missingSkill
+	for _, key := range globalLockKeys(lock) {
+		if used[key] {
+			continue
+		}
+		entry, _ := lock.Get(key)
+		missing = append(missing, missingSkill{Key: key, Ref: globalRef(entry)})
+	}
+	return matched, missing
+}
+
+// globalRef is the display-facing subset of a global entry.
+func globalRef(entry lockfile.GlobalEntry) lockRef {
+	return lockRef{
+		Source:     entry.Source,
+		SourceURL:  entry.SourceURL,
+		SourceType: entry.SourceType,
+		SkillName:  entry.SkillName,
+		Ref:        entry.Ref,
+		Commit:     entry.Commit,
+	}
+}
+
+// globalLockKeys returns the global lock keys in sorted order.
+func globalLockKeys(lock *lockfile.GlobalFile) []string {
+	keys := make([]string, 0, len(lock.Skills))
+	for key := range lock.Skills {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// lookupGlobalEntry mirrors lookupEntry for the global lock.
+func lookupGlobalEntry(lock *lockfile.GlobalFile, names ...string) (string, lockfile.GlobalEntry, bool) {
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if entry, ok := lock.Get(name); ok {
+			return name, entry, true
+		}
+	}
+	for _, key := range globalLockKeys(lock) {
+		sanitized := skill.SanitizeName(key)
+		for _, name := range names {
+			if name != "" && sanitized == name {
+				return key, lock.Skills[key], true
+			}
+		}
+	}
+	return "", lockfile.GlobalEntry{}, false
 }
 
 // lookupEntry finds the lock entry for an installed skill: the exact folder or frontmatter name
@@ -329,10 +493,10 @@ func skillInfo(c comparedSkill) SkillInfo {
 		Name:        c.Name,
 		Path:        c.Path,
 		Agents:      displayNames(c.Agents),
-		Source:      c.Entry.Source,
-		SourceURL:   c.Entry.SourceURL,
-		SourceType:  c.Entry.SourceType,
-		RenamedFrom: c.Entry.SkillName,
+		Source:      c.Ref.Source,
+		SourceURL:   c.Ref.SourceURL,
+		SourceType:  c.Ref.SourceType,
+		RenamedFrom: c.Ref.SkillName,
 		Status:      c.Status,
 	}
 }

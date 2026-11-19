@@ -42,6 +42,9 @@ type Entry struct {
 	// ForcedCopy is set when --copy overrode what would otherwise have been symlink mode. Only
 	// then does upstream record installMode in the lock.
 	ForcedCopy bool
+
+	// Global marks a global-scope plan: agent top-level directories are never assumed to exist.
+	Global bool
 }
 
 // PlanOptions are the inputs of planning that do not come from the skills or agents.
@@ -71,7 +74,8 @@ func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts
 		if opts.Rename != "" {
 			name = opts.Rename
 		}
-		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: opts.ForceCopy && !derivedCopy, RenameTo: opts.Rename}
+		e := Entry{Skill: s, Name: name, Mode: mode, ForcedCopy: opts.ForceCopy && !derivedCopy,
+			RenameTo: opts.Rename, Global: opts.Global}
 		if mode == ModeSymlink {
 			e.Canonical = filepath.Join(agents.CanonicalSkillsDir(env, opts.Global), name)
 		}

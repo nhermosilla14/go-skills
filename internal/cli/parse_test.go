@@ -112,6 +112,11 @@ func TestParseAddOptions(t *testing.T) {
 			args: []string{"add", "./x", "--rename", "first", "--rename=second"},
 			want: app.AddOptions{Source: "./x", Rename: "second"},
 		},
+		{
+			name: "global flag",
+			args: []string{"add", "./x", "-g", "-y"},
+			want: app.AddOptions{Source: "./x", Global: true, Yes: true},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,7 +146,6 @@ func TestParseUsageErrors(t *testing.T) {
 		{"extra source", []string{"add", "./a", "./b"}, "unexpected argument './b'"},
 		{"missing source", []string{"add", "-y"}, "missing required argument: source"},
 		{"install without source", []string{"install"}, "restoring from skills-lock.json is not supported yet"},
-		{"global unsupported", []string{"add", "./x", "-g"}, "global scope is not supported yet"},
 		{"list flag without value", []string{"add", "./x", "--agent", "-y"}, "--agent requires an agent name"},
 		{"skill equals empty", []string{"add", "./x", "--skill="}, "--skill requires a skill name"},
 		{"boolean with value", []string{"add", "./x", "--copy=1"}, "--copy does not take a value"},
@@ -186,6 +190,16 @@ func TestParseListAndCheck(t *testing.T) {
 		t.Errorf("ls = %+v", cmd.List)
 	}
 
+	cmd, err = Parse([]string{"list", "-g"})
+	if err != nil || cmd.Kind != KindList || !cmd.List.Global {
+		t.Errorf("list -g = %+v, %v", cmd.List, err)
+	}
+
+	cmd, err = Parse([]string{"check", "alpha", "--global"})
+	if err != nil || cmd.Kind != KindCheck || !cmd.Check.Global {
+		t.Errorf("check --global = %+v, %v", cmd.Check, err)
+	}
+
 	cmd, err = Parse([]string{"check", "alpha", "--", "-beta"})
 	if err != nil {
 		t.Fatalf("Parse check: %v", err)
@@ -211,8 +225,6 @@ func TestParseListAndCheckUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"list global", []string{"list", "-g"}, "global scope is not supported yet"},
-		{"check global", []string{"check", "--global"}, "global scope is not supported yet"},
 		{"list positional", []string{"list", "extra"}, "unexpected argument 'extra'"},
 		{"list unknown", []string{"list", "--force"}, "unknown option '--force'"},
 		{"list json value", []string{"list", "--json=1"}, "--json does not take a value"},
@@ -281,6 +293,11 @@ func TestParseRemoveOptions(t *testing.T) {
 			args: []string{"remove", "alpha", "-a", "*", "-y"},
 			want: app.RemoveOptions{Skills: []string{"alpha"}, Agents: []string{"*"}, Yes: true},
 		},
+		{
+			name: "global",
+			args: []string{"remove", "alpha", "-g"},
+			want: app.RemoveOptions{Skills: []string{"alpha"}, Global: true},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,8 +321,6 @@ func TestParseRemoveUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"global", []string{"remove", "alpha", "-g"}, "global scope is not supported yet"},
-		{"long global", []string{"remove", "--global"}, "global scope is not supported yet"},
 		{"unknown flag", []string{"remove", "--force"}, "unknown option '--force'"},
 		{"unknown short", []string{"remove", "-q"}, "unknown option '-q'"},
 		{"agent without value", []string{"remove", "-a"}, "--agent requires an agent name"},
@@ -365,6 +380,11 @@ func TestParseUpdateOptions(t *testing.T) {
 			args: []string{"update", "--", "-weird"},
 			want: app.UpdateOptions{Skills: []string{"-weird"}},
 		},
+		{
+			name: "global",
+			args: []string{"update", "-g"},
+			want: app.UpdateOptions{Global: true},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -388,8 +408,6 @@ func TestParseUpdateUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"global", []string{"update", "-g"}, "global scope is not supported yet"},
-		{"long global", []string{"update", "--global"}, "global scope is not supported yet"},
 		{"unknown flag", []string{"update", "--force"}, "unknown option '--force'"},
 		{"unknown short", []string{"update", "-q"}, "unknown option '-q'"},
 		{"boolean with value", []string{"update", "--project=1"}, "--project does not take a value"},
@@ -432,7 +450,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 			t.Errorf("help misses %q", want)
 		}
 	}
-	if strings.Contains(help, "--global") {
-		t.Error("help advertises unsupported --global")
+	if !strings.Contains(help, "--global") {
+		t.Error("help misses the global scope flag")
 	}
 }

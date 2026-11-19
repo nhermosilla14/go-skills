@@ -215,13 +215,6 @@ func TestCheckDoesNotCheckMissingSkills(t *testing.T) {
 	}
 }
 
-func TestCheckRejectsGlobalScope(t *testing.T) {
-	_, err := Check(context.Background(), CheckOptions{Global: true}, testEnv(t.TempDir()))
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("err = %v, want ErrUsage", err)
-	}
-}
-
 func TestCheckRejectsCorruptLock(t *testing.T) {
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, lockfile.FileName), []byte("not json"), 0o644); err != nil {

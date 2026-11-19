@@ -213,6 +213,39 @@ func TestRegistryOrderMatchesDocumentedTable(t *testing.T) {
 	}
 }
 
+func TestGlobalLockPath(t *testing.T) {
+	tests := []struct {
+		name string
+		env  Environment
+		want string
+	}{
+		{
+			name: "linux home",
+			env:  Environment{GOOS: "linux", Home: "/home/u", Vars: map[string]string{}},
+			want: "/home/u/.agents/.skill-lock.json",
+		},
+		{
+			name: "xdg state home wins",
+			env: Environment{GOOS: "linux", Home: "/home/u", Vars: map[string]string{
+				"XDG_STATE_HOME": " /state ",
+			}},
+			want: "/state/skills/.skill-lock.json",
+		},
+		{
+			name: "windows userprofile home",
+			env:  Environment{GOOS: "windows", Home: "C:/Users/u", Vars: map[string]string{}},
+			want: "C:/Users/u/.agents/.skill-lock.json",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GlobalLockPath(tc.env); got != filepath.FromSlash(tc.want) {
+				t.Errorf("GlobalLockPath = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOpenClawPrefersExistingLegacyHome(t *testing.T) {
 	home := t.TempDir()
 	env := Environment{GOOS: "linux", Home: home, Cwd: t.TempDir(), Vars: map[string]string{}}

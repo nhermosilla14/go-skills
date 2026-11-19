@@ -23,7 +23,7 @@ func TestWriteUpdate(t *testing.T) {
 		Uncheckable: []app.UncheckableSkill{
 			{Name: "local-skill", Reason: "Local path", Source: "./src"},
 		},
-		Notes: []string{"note: global scope is not supported yet; updating project skills only"},
+		Notes: []string{"note: an example note"},
 	}
 	var out bytes.Buffer
 	WriteUpdate(&out, rep)
@@ -34,7 +34,7 @@ Updating beta…
 ✓ Updated beta
 Skipped gamma: several skills match this name
 ✗ Failed to update delta: not found in the source
-note: global scope is not supported yet; updating project skills only
+note: an example note
 1 skill(s) cannot be checked automatically:
   local-skill  Local path
 To update: skills add ./src -y

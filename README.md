@@ -71,6 +71,11 @@ Current, working subset:
 ./skills rm --all
 ./skills update
 ./skills upgrade web-design
+
+# Global scope: install once for every project.
+./skills add vercel-labs/agent-skills -g -a opencode -y
+./skills list -g
+./skills remove -g --all
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -88,10 +93,10 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | Command | Purpose | Status |
 | --- | --- | --- |
 | `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial |
-| `list` | List installed skills and compare them with the project lock file. | Project scope |
-| `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Project scope |
-| `update` | Re-resolve tracked project skills to newer revisions, preserving mode and rename. | Project scope |
-| `check` | Report whether tracked skills are outdated without changing anything. | Project scope |
+| `list` | List installed skills and compare them with the lock file. | Project and global |
+| `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Project and global |
+| `update` | Re-resolve tracked skills to newer revisions, preserving mode and rename. | Project and global |
+| `check` | Report whether tracked skills are outdated without changing anything. | Project and global |
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | `TODO` |
 | `find` | Search skill catalogs. | `TODO` |
 | `init` | Create a new `SKILL.md` skeleton. | `TODO` |
@@ -105,9 +110,11 @@ installs nothing.
 
 There is no telemetry and there will not be any.
 
-Data compatibility commitments, once implemented: `skills-lock.json`, the global lock file and the
-content hash algorithm must keep validating existing upstream lock files. Where upstream
-documentation and upstream code disagree, the documented behavior wins.
+Data compatibility: `skills-lock.json` (v2, with v1 migration), the global
+`$XDG_STATE_HOME/skills/.skill-lock.json` (v3) and the content hash algorithm keep validating
+existing upstream lock files. Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub API limits when the
+global lock records folder tree hashes. Where upstream documentation and upstream code disagree,
+the documented behavior wins.
 
 ## Supported platforms
 

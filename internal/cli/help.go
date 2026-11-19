@@ -13,10 +13,10 @@ func Help() string {
 
 Commands:
   add <source>      Install the skills found in a source
-  list, ls          List installed project skills and their lock status
+  list, ls          List installed skills and their lock status
   check [skill...]  Report available updates and local changes, without writing
-  update, upgrade   Update installed project skills to their latest content
-  remove, rm, r     Remove installed project skills
+  update, upgrade   Update installed skills to their latest content
+  remove, rm, r     Remove installed skills
   help              Show this help
   version           Show version, commit and build date
 
@@ -43,6 +43,7 @@ Add options:
                            Known agents: %s
   -s, --skill <name...>    Skills to install (default: all). Use '*' for all.
   -y, --yes                Install without prompting
+  -g, --global             Install into the user home instead of the project
       --all                Every skill for every agent, without prompting
       --copy               Copy skills instead of linking them
       --json               Print one JSON array on stdout; requires -y or --all
@@ -54,16 +55,19 @@ Add options:
 
 List options:
   -a, --agent <agent...>   Only these agents (default: all). Use '*' for all.
+  -g, --global             List global skills and the global lock
       --json               Print one JSON array on stdout
   -h, --help               Show this help
 
 Check options:
   check [skill...]         Limit the check to the named skills
+  -g, --global             Check the global scope
   -h, --help               Show this help
 
 Update options:
   update [skill...]        Update every tracked skill, or only the named ones
   -p, --project            Update the project scope without asking
+  -g, --global             Update the global scope
   -y, --yes                Update without prompting
   -h, --help               Show this help
 
@@ -72,6 +76,7 @@ Remove options:
   -a, --agent <agent...>   Only these agents (default: every agent that has the skill).
                            Use '*' for all.
   -s, --skill <name...>    Skills to remove. Use '*' for every lock-tracked skill.
+  -g, --global             Remove from the global scope
   -y, --yes                Remove without prompting
       --all                Remove every lock-tracked skill for every agent, without prompting
   -h, --help               Show this help

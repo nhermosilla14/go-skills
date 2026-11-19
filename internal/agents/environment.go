@@ -28,7 +28,7 @@ type Environment struct {
 func FromOS(cwd string) Environment {
 	vars := map[string]string{}
 	for _, name := range []string{
-		"XDG_CONFIG_HOME", "APPDATA", "FLATPAK_XDG_CONFIG_HOME", "HOME", "USERPROFILE",
+		"XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPDATA", "FLATPAK_XDG_CONFIG_HOME", "HOME", "USERPROFILE",
 		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "HERMES_HOME", "AUTOHAND_HOME",
 		"GROK_HOME", "SARVAM_HOME", "REASONIX_HOME",
 	} {
@@ -76,6 +76,15 @@ func CanonicalSkillsDir(env Environment, global bool) string {
 		base = env.Home
 	}
 	return filepath.Join(base, ".agents", "skills")
+}
+
+// GlobalLockPath is the global lock file: $XDG_STATE_HOME/skills/.skill-lock.json when the variable
+// is set, else <home>/.agents/.skill-lock.json. Home resolution is the caller's.
+func GlobalLockPath(env Environment) string {
+	if v := env.getenv("XDG_STATE_HOME"); v != "" {
+		return filepath.Join(v, "skills", ".skill-lock.json")
+	}
+	return filepath.Join(env.Home, ".agents", ".skill-lock.json")
 }
 
 // pathExists is the only filesystem probe used by detection: existence, errors count as absent.

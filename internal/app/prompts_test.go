@@ -418,14 +418,27 @@ func TestAddDeclinedConfirmationCancels(t *testing.T) {
 	}
 }
 
-func TestAddGlobalIsRejectedAfterTheFlow(t *testing.T) {
+func TestAddGlobalInstallsIntoTheHome(t *testing.T) {
 	project := t.TempDir()
+	env := interactiveEnv(t, project)
 	script := NewScripted(t, Answers{
-		Scope: ScopeGlobal, Skills: []string{"alpha"}, Agents: []string{"opencode"}, Proceed: true,
+		Skills: []string{"alpha"}, Agents: []string{"opencode"}, Proceed: true,
 	})
-	_, err := Add(AddOptions{Source: twoSkillSource(t), Global: true}, interactiveEnv(t, project), script)
-	if err == nil || !strings.Contains(err.Error(), "global installs are not implemented yet") {
-		t.Fatalf("err = %v, want the global-scope error", err)
+	rep, err := Add(AddOptions{Source: twoSkillSource(t), Global: true}, env, script)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if rep.Scope != string(ScopeGlobal) {
+		t.Errorf("scope = %q, want global", rep.Scope)
+	}
+	if _, err := os.Stat(filepath.Join(env.AgentEnv.Home, ".agents", "skills", "alpha", "SKILL.md")); err != nil {
+		t.Errorf("global skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.AgentEnv.Home, ".agents", ".skill-lock.json")); err != nil {
+		t.Errorf("global lock missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, lockfile.FileName)); !os.IsNotExist(err) {
+		t.Errorf("global add wrote the project lock: %v", err)
 	}
 	asked := script.Asked()
 	if len(asked) != 1 || strings.Contains(strings.Join(ids(asked[0].Steps), ","), string(StepScope)) {

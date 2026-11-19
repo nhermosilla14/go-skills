@@ -545,8 +545,36 @@ func TestUpdateFiltersByInstalledName(t *testing.T) {
 	if len(runner.clones) != 1 {
 		t.Errorf("clones = %v, want the selected group only", runner.clones)
 	}
-	if !hasNote(rep.Notes, "global scope is not supported yet") {
-		t.Errorf("notes = %v, want the global limitation", rep.Notes)
+	if hasNote(rep.Notes, "global scope") {
+		t.Errorf("notes = %v, want no global limitation", rep.Notes)
+	}
+}
+
+func TestUpdateRefetchesAnEmptyHash(t *testing.T) {
+	project := t.TempDir()
+	installed := installAlpha(t, project, ".agents/skills/alpha", "one\n")
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+	})
+	runner := newUpdateRunner()
+	runner.trees[updateRepo] = updateSource(t, "one\n")
+	rep, err := Update(UpdateOptions{Project: true, Runner: runner}, updateTestEnv(t, project))
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Status != UpdateUpdated {
+		t.Fatalf("results = %+v, want the empty hash re-fetched", rep.Results)
+	}
+	want, err := hash.Dir(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockfile.Load(filepath.Join(project, lockfile.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lock.Skills["alpha"].ComputedHash; got != want {
+		t.Errorf("computedHash = %q, want %q", got, want)
 	}
 }
 
@@ -589,8 +617,12 @@ func TestUpdateScopePrompt(t *testing.T) {
 
 	other := projectWithSkill(t)
 	global := NewScripted(t, Answers{Scope: ScopeGlobal})
-	if _, err := Update(UpdateOptions{Runner: runner}, envFor(t, other), global); !errors.Is(err, ErrUsage) {
-		t.Fatalf("err = %v, want ErrUsage for global scope", err)
+	rep, err := Update(UpdateOptions{Runner: runner}, envFor(t, other), global)
+	if err != nil {
+		t.Fatalf("global update: %v", err)
+	}
+	if rep.Scope != string(ScopeGlobal) {
+		t.Errorf("scope = %q, want global", rep.Scope)
 	}
 	both := NewScripted(t, Answers{Scope: ScopeBoth})
 	if _, err := Update(UpdateOptions{Runner: runner}, envFor(t, other), both); !errors.Is(err, ErrUsage) {

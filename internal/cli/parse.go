@@ -105,9 +105,7 @@ func parseAdd(name string, args []string) (Command, error) {
 		p.opts.Agents = []string{"*"}
 		p.opts.Yes = true
 	}
-	if p.global {
-		return Command{}, usagef("global scope is not supported yet")
-	}
+	p.opts.Global = p.global
 	if p.opts.Source == "" {
 		if name == "install" || name == "i" {
 			return Command{}, usagef("restoring from skills-lock.json is not supported yet; pass a source")
@@ -278,9 +276,7 @@ func parseList(args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
-	if p.global {
-		return Command{}, usagef("global scope is not supported yet")
-	}
+	p.opts.Global = p.global
 	return Command{Kind: KindList, List: p.opts, JSON: p.json}, nil
 }
 
@@ -398,9 +394,7 @@ func parseCheck(args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
-	if p.global {
-		return Command{}, usagef("global scope is not supported yet")
-	}
+	p.opts.Global = p.global
 	return Command{Kind: KindCheck, Check: p.opts}, nil
 }
 
@@ -450,9 +444,7 @@ func parseUpdate(args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
-	if p.global {
-		return Command{}, usagef("global scope is not supported yet")
-	}
+	p.opts.Global = p.global
 	return Command{Kind: KindUpdate, Update: p.opts}, nil
 }
 
@@ -504,9 +496,7 @@ func parseRemove(args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
-	if p.global {
-		return Command{}, usagef("global scope is not supported yet")
-	}
+	p.opts.Global = p.global
 	if p.opts.All {
 		p.opts.Agents = []string{"*"}
 		p.opts.Yes = true

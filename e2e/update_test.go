@@ -215,8 +215,8 @@ func TestE2EUpdateScopeAndNames(t *testing.T) {
 		t.Fatalf("add exit = %d\nstderr:\n%s", res.exit, res.stderr)
 	}
 
-	res = run(t, project, "update", "-g")
-	if res.exit != 2 || !strings.Contains(res.stderr, "global scope is not supported yet") {
+	res = runGlobal(t, project, t.TempDir(), "update", "-g")
+	if res.exit != 0 || !strings.Contains(res.stderr, "No global skills tracked in lock file.") {
 		t.Fatalf("update -g exit = %d, stderr = %q", res.exit, res.stderr)
 	}
 
@@ -224,8 +224,8 @@ func TestE2EUpdateScopeAndNames(t *testing.T) {
 	if res.exit != 1 || !strings.Contains(res.stderr, "no installed skill matches this name") {
 		t.Fatalf("unmatched update exit = %d, stderr:\n%s", res.exit, res.stderr)
 	}
-	if !strings.Contains(res.stderr, "global scope is not supported yet") {
-		t.Errorf("named update misses the global limitation:\n%s", res.stderr)
+	if strings.Contains(res.stderr, "global scope is not supported yet") {
+		t.Errorf("named update still claims a global limitation:\n%s", res.stderr)
 	}
 
 	empty := t.TempDir()

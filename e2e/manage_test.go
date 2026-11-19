@@ -122,12 +122,12 @@ func TestE2EManagementRoundTrip(t *testing.T) {
 		t.Error("check rewrote skills-lock.json")
 	}
 
-	res = run(t, project, "list", "-g")
-	if res.exit != 2 {
-		t.Fatalf("list -g exit = %d, want 2\nstderr:\n%s", res.exit, res.stderr)
+	res = runGlobal(t, project, t.TempDir(), "list", "-g")
+	if res.exit != 0 {
+		t.Fatalf("list -g exit = %d\nstderr:\n%s", res.exit, res.stderr)
 	}
-	if !strings.Contains(res.stderr, "global scope is not supported yet") {
-		t.Errorf("list -g stderr = %q", res.stderr)
+	if !strings.Contains(res.stdout, "Global Skills") || !strings.Contains(res.stdout, "No global skills found.") {
+		t.Errorf("list -g stdout = %q", res.stdout)
 	}
 }
 

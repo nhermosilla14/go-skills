@@ -21,6 +21,7 @@ import (
 type UpdateOptions struct {
 	Skills  []string      // installed names to update; empty updates every tracked skill
 	Project bool          // -p: update the project scope without asking
+	Global  bool          // -g: update the global scope
 	Yes     bool          // -y: never prompt
 	Runner  source.Runner // git runner; nil uses PATH, tests pass a fake
 }
@@ -61,6 +62,7 @@ type UncheckableSkill struct {
 
 // UpdateReport is the outcome of an update run, for the CLI to render.
 type UpdateReport struct {
+	Scope           string
 	Checks          []UpdateCheck
 	Results         []UpdateResult
 	Uncheckable     []UncheckableSkill
@@ -108,9 +110,8 @@ func (r UpdateReport) Skipped() bool {
 	return false
 }
 
-// Update refreshes the installed project skills from their recorded sources. Global scope is not
-// supported yet: -g is rejected by the parser, an explicit name filter updates the project and
-// reports the global limitation, and a scope prompt that picks Global or Both fails after asking.
+// Update refreshes the installed skills of the selected scope from their recorded sources. The
+// project lock and the global lock never mix: each run reads and writes only its own.
 func Update(opts UpdateOptions, env Env, prompters ...Prompter) (UpdateReport, error) {
 	var prompter Prompter
 	if len(prompters) > 0 {
@@ -124,15 +125,14 @@ func Update(opts UpdateOptions, env Env, prompters ...Prompter) (UpdateReport, e
 		return rep, nil
 	}
 	agentEnv := env.agentsEnv()
-	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
-	lock, err := lockfile.Load(lockPath)
+	lock, err := openUpdateLock(env, agentEnv, rep.Scope == string(ScopeGlobal))
 	if err != nil {
 		return rep, err
 	}
 	tasks, groups := planUpdates(lock, opts.Skills, &rep)
 	if len(tasks) == 0 && len(rep.Results) == 0 && len(rep.Uncheckable) == 0 {
 		rep.NothingToUpdate = true
-		rep.Notes = append(rep.Notes, nothingToUpdateNotes()...)
+		rep.Notes = append(rep.Notes, nothingToUpdateNotes(lock.global())...)
 		return rep, nil
 	}
 	defer removeUpdateTrees(groups)
@@ -142,35 +142,44 @@ func Update(opts UpdateOptions, env Env, prompters ...Prompter) (UpdateReport, e
 		if groups[t.group].err != "" {
 			continue // reported once, as the group check failure
 		}
-		res, entryChanged := updateSkill(env, agentEnv, lock, t, groups[t.group])
+		res, entryChanged, note := updateSkill(env, agentEnv, lock, t, groups[t.group], opts.Runner)
 		if entryChanged {
 			changed = true
+		}
+		if note != "" {
+			rep.Notes = append(rep.Notes, note)
 		}
 		rep.Results = append(rep.Results, res)
 	}
 	if changed {
-		if err := lock.Save(lockPath); err != nil {
+		if err := lock.save(); err != nil {
 			return rep, err
 		}
-		rep.LockPath = lockPath
+		rep.LockPath = lock.path()
 	}
 	return rep, nil
 }
 
-// chooseUpdateScope mirrors upstream's project half. It sets NothingToUpdate when the automatic
-// scope finds no project skills, and returns a usage error for a global answer to the prompt.
+// chooseUpdateScope resolves the scope: -g or -p wins, names without a flag stay in the project,
+// and an interactive answer may pick global. Updating both scopes is not supported yet.
 func chooseUpdateScope(opts UpdateOptions, env Env, prompter Prompter, rep *UpdateReport) error {
+	if opts.Global && opts.Project {
+		return fmt.Errorf("%w: cannot combine --global with --project", ErrUsage)
+	}
+	rep.Scope = string(ScopeProject)
+	if opts.Global {
+		rep.Scope = string(ScopeGlobal)
+		return nil
+	}
 	switch {
 	case opts.Project:
 		return nil
 	case len(opts.Skills) > 0:
-		rep.Notes = append(rep.Notes,
-			"note: global scope is not supported yet; updating project skills only")
 		return nil
 	case opts.Yes || !env.IsTTY:
 		if !hasProjectSkills(env) {
 			rep.NothingToUpdate = true
-			rep.Notes = append(rep.Notes, nothingToUpdateNotes()...)
+			rep.Notes = append(rep.Notes, nothingToUpdateNotes(false)...)
 		}
 		return nil
 	}
@@ -187,14 +196,25 @@ func chooseUpdateScope(opts UpdateOptions, env Env, prompter Prompter, rep *Upda
 	if err != nil {
 		return err
 	}
-	if answers.Scope != ScopeProject {
-		return fmt.Errorf("%w: global scope is not supported yet", ErrUsage)
+	switch answers.Scope {
+	case ScopeProject:
+		return nil
+	case ScopeGlobal:
+		rep.Scope = string(ScopeGlobal)
+		return nil
+	default:
+		return fmt.Errorf("%w: updating both scopes is not supported yet", ErrUsage)
 	}
-	return nil
 }
 
-// nothingToUpdateNotes is what a run with no project skills reports.
-func nothingToUpdateNotes() []string {
+// nothingToUpdateNotes is what a run with no tracked skills reports.
+func nothingToUpdateNotes(global bool) []string {
+	if global {
+		return []string{
+			"No global skills tracked in lock file.",
+			"Install skills with skills add <source> -g.",
+		}
+	}
 	return []string{
 		"No project skills to update.",
 		"Install project skills with skills add <source>.",
@@ -220,10 +240,123 @@ func hasProjectSkills(env Env) bool {
 	return false
 }
 
+// updateRecord is the union of the fields update reads and writes, so the two lock versions share
+// one update path.
+type updateRecord struct {
+	Source          string
+	SourceURL       string
+	SourceType      string
+	Ref             string
+	Commit          string
+	SkillPath       string
+	SkillName       string
+	InstallMode     string
+	ComputedHash    string // project lock content hash
+	SkillFolderHash string // global lock folder hash
+	InstalledAt     string
+	UpdatedAt       string
+	PluginName      string
+	SourceBaseURL   string
+	WellKnownDigest string
+}
+
+// recordedHash is the hash update compares against: the content hash of a project entry, or the
+// folder hash of a global one.
+func (e updateRecord) recordedHash() string {
+	if e.ComputedHash != "" {
+		return e.ComputedHash
+	}
+	return e.SkillFolderHash
+}
+
+// updateLock adapts a project or global lock to the update flow.
+type updateLock interface {
+	keys() []string
+	entry(key string) (updateRecord, bool)
+	put(key string, e updateRecord)
+	save() error
+	path() string
+	global() bool
+}
+
+// openUpdateLock reads the lock of the selected scope.
+func openUpdateLock(env Env, agentEnv agents.Environment, global bool) (updateLock, error) {
+	if global {
+		path := agents.GlobalLockPath(agentEnv)
+		lock, err := lockfile.LoadGlobal(path)
+		return &globalUpdateLock{lock: lock, lockPath: path}, err
+	}
+	path := filepath.Join(env.WorkDir, lockfile.FileName)
+	lock, err := lockfile.Load(path)
+	return &projectUpdateLock{lock: lock, lockPath: path}, err
+}
+
+// projectUpdateLock adapts the project lock.
+type projectUpdateLock struct {
+	lock     *lockfile.File
+	lockPath string
+}
+
+func (l *projectUpdateLock) keys() []string { return lockKeys(l.lock) }
+
+func (l *projectUpdateLock) entry(key string) (updateRecord, bool) {
+	e, ok := l.lock.Get(key)
+	return updateRecord{
+		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
+		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
+		InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+	}, ok
+}
+
+func (l *projectUpdateLock) put(key string, e updateRecord) {
+	l.lock.Put(key, lockfile.Entry{
+		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
+		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
+		InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+	})
+}
+
+func (l *projectUpdateLock) save() error  { return l.lock.Save(l.lockPath) }
+func (l *projectUpdateLock) path() string { return l.lockPath }
+func (l *projectUpdateLock) global() bool { return false }
+
+// globalUpdateLock adapts the global lock.
+type globalUpdateLock struct {
+	lock     *lockfile.GlobalFile
+	lockPath string
+}
+
+func (l *globalUpdateLock) keys() []string { return globalLockKeys(l.lock) }
+
+func (l *globalUpdateLock) entry(key string) (updateRecord, bool) {
+	e, ok := l.lock.Get(key)
+	return updateRecord{
+		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
+		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
+		InstallMode: e.InstallMode, SkillFolderHash: e.SkillFolderHash,
+		InstalledAt: e.InstalledAt, UpdatedAt: e.UpdatedAt, PluginName: e.PluginName,
+		SourceBaseURL: e.SourceBaseURL, WellKnownDigest: e.WellKnownDigest,
+	}, ok
+}
+
+func (l *globalUpdateLock) put(key string, e updateRecord) {
+	l.lock.Put(key, lockfile.GlobalEntry{
+		Source: e.Source, SourceType: e.SourceType, SourceURL: e.SourceURL, Ref: e.Ref,
+		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
+		SkillFolderHash: e.SkillFolderHash, InstalledAt: e.InstalledAt, UpdatedAt: e.UpdatedAt,
+		PluginName: e.PluginName, SourceBaseURL: e.SourceBaseURL,
+		WellKnownDigest: e.WellKnownDigest, InstallMode: e.InstallMode,
+	})
+}
+
+func (l *globalUpdateLock) save() error  { return l.lock.Save(l.lockPath) }
+func (l *globalUpdateLock) path() string { return l.lockPath }
+func (l *globalUpdateLock) global() bool { return true }
+
 // updateTask is one lock entry to check, with the group that acquires its source.
 type updateTask struct {
 	key   string
-	entry lockfile.Entry
+	entry updateRecord
 	group int
 }
 
@@ -239,7 +372,7 @@ type updateGroup struct {
 
 // planUpdates classifies the lock entries: uncheckable ones are reported, the rest are grouped by
 // sourceUrl or source plus ref, in lock key order.
-func planUpdates(lock *lockfile.File, names []string, rep *UpdateReport) ([]updateTask, []*updateGroup) {
+func planUpdates(lock updateLock, names []string, rep *UpdateReport) ([]updateTask, []*updateGroup) {
 	selected, unmatched := selectUpdateKeys(lock, names)
 	for _, name := range unmatched {
 		rep.Results = append(rep.Results, UpdateResult{
@@ -249,21 +382,27 @@ func planUpdates(lock *lockfile.File, names []string, rep *UpdateReport) ([]upda
 	groupIndex := map[string]int{}
 	var tasks []updateTask
 	var groups []*updateGroup
-	for _, key := range lockKeys(lock) {
+	for _, key := range lock.keys() {
 		if len(names) > 0 && !selected[key] {
 			continue
 		}
-		entry, _ := lock.Get(key)
+		entry, _ := lock.entry(key)
 		if entry.SourceType == "node_modules" {
+			if lock.global() {
+				rep.Uncheckable = append(rep.Uncheckable, UncheckableSkill{
+					Name: key, Reason: "node_modules sources cannot be checked automatically",
+					Source: source.RedactCredentials(updateRecordSource(entry)),
+				})
+			}
 			continue
 		}
 		if reason := uncheckableReason(entry); reason != "" {
 			rep.Uncheckable = append(rep.Uncheckable, UncheckableSkill{
-				Name: key, Reason: reason, Source: source.RedactCredentials(entrySource(entry)),
+				Name: key, Reason: reason, Source: source.RedactCredentials(updateRecordSource(entry)),
 			})
 			continue
 		}
-		raw := source.RedactCredentials(entrySource(entry))
+		raw := source.RedactCredentials(updateRecordSource(entry))
 		groupKey := raw + "\x00" + entry.Ref
 		index, ok := groupIndex[groupKey]
 		if !ok {
@@ -277,11 +416,15 @@ func planUpdates(lock *lockfile.File, names []string, rep *UpdateReport) ([]upda
 }
 
 // uncheckableReason explains why a lock entry cannot be checked automatically, or returns "".
-func uncheckableReason(e lockfile.Entry) string {
+func uncheckableReason(e updateRecord) string {
 	switch e.SourceType {
 	case "local":
 		return "Local path"
 	case "github", "gitlab", "git", "azure":
+	case "download":
+		return "Download sources cannot be checked automatically"
+	case "well-known":
+		return "Well-known skill"
 	default:
 		if e.SourceType == "" {
 			return "No source type recorded"
@@ -291,15 +434,15 @@ func uncheckableReason(e lockfile.Entry) string {
 	if e.SkillPath == "" {
 		return "No skill path recorded"
 	}
-	if entrySource(e) == "" {
+	if updateRecordSource(e) == "" {
 		return "No source recorded"
 	}
 	return ""
 }
 
-// entrySource is the location a lock entry is fetched from: the fetch URL when recorded, the
+// updateRecordSource is the location a lock entry is fetched from: the fetch URL when recorded, the
 // shorthand otherwise.
-func entrySource(e lockfile.Entry) string {
+func updateRecordSource(e updateRecord) string {
 	if e.SourceURL != "" {
 		return e.SourceURL
 	}
@@ -309,7 +452,7 @@ func entrySource(e lockfile.Entry) string {
 // selectUpdateKeys resolves the optional name filter against the lock keys: an exact
 // case-insensitive match first, then the normalized and sanitized forms. It returns the keys to
 // update and the names that matched nothing.
-func selectUpdateKeys(lock *lockfile.File, names []string) (map[string]bool, []string) {
+func selectUpdateKeys(lock updateLock, names []string) (map[string]bool, []string) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -329,9 +472,9 @@ func selectUpdateKeys(lock *lockfile.File, names []string) (map[string]bool, []s
 }
 
 // matchUpdateKeys returns the lock keys a requested name resolves to.
-func matchUpdateKeys(lock *lockfile.File, name string) []string {
+func matchUpdateKeys(lock updateLock, name string) []string {
 	var exact []string
-	for _, key := range lockKeys(lock) {
+	for _, key := range lock.keys() {
 		if strings.EqualFold(key, name) {
 			exact = append(exact, key)
 		}
@@ -342,7 +485,7 @@ func matchUpdateKeys(lock *lockfile.File, name string) []string {
 	want := skill.NormalizeName(name)
 	sanitized := skill.SanitizeName(name)
 	var matched []string
-	for _, key := range lockKeys(lock) {
+	for _, key := range lock.keys() {
 		if skill.NormalizeName(key) == want || skill.SanitizeName(key) == sanitized {
 			matched = append(matched, key)
 		}
@@ -405,33 +548,55 @@ func removeUpdateTrees(groups []*updateGroup) {
 // updateSkill compares one lock entry with its fetched tree and reinstalls it when the content,
 // the location or the recorded path changed. It reports the result and whether the lock entry
 // changed in memory.
-func updateSkill(env Env, agentEnv agents.Environment, lock *lockfile.File, t updateTask, g *updateGroup) (UpdateResult, bool) {
+func updateSkill(env Env, agentEnv agents.Environment, lock updateLock, t updateTask,
+	g *updateGroup, runner source.Runner) (UpdateResult, bool, string) {
 	installed := skill.SanitizeName(t.key)
 	found, res, ok := locateUpdateSkill(g.found.Skills, updateRecordedName(t.entry, t.key), t.entry.SkillPath)
 	if !ok {
 		res.Name = t.key
-		return res, false
+		return res, false, ""
 	}
-	locations := installedAgents(agentEnv, installed)
-	digest, err := hash.Dir(found.Dir)
+	locations := installedAgents(agentEnv, installed, lock.global())
+	upstream, err := fetchedHash(g, t.entry, found, lock.global(), runner)
 	if err != nil {
-		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false
+		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false, ""
 	}
 	moved := normalizeSkillPath(found.SkillPath()) != normalizeSkillPath(t.entry.SkillPath)
-	if !moved && len(locations) > 0 && t.entry.ComputedHash != "" && digest == t.entry.ComputedHash {
-		return UpdateResult{Name: t.key, Status: UpdateCurrent}, backfillCommit(lock, t.entry, t.key, g.tree.Commit)
+	if !moved && len(locations) > 0 && t.entry.recordedHash() != "" &&
+		strings.EqualFold(upstream, t.entry.recordedHash()) {
+		return UpdateResult{Name: t.key, Status: UpdateCurrent},
+			backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
 	}
 	return reinstallSkill(env, agentEnv, lock, t, g, found, installed, locations)
 }
 
+// fetchedHash is the hash of the fetched skill folder in the shape the lock records: a content
+// hash for the project lock and for content-hashed global entries, and a Git tree SHA for GitHub
+// global entries recorded as 40-hex.
+func fetchedHash(g *updateGroup, entry updateRecord, found skill.Skill, global bool,
+	runner source.Runner) (string, error) {
+	if global && isTreeHash(entry.SkillFolderHash) && entry.SourceType == string(source.KindGitHub) {
+		sha, err := source.TreeSHA(context.Background(), g.tree.Dir, g.tree.Commit,
+			skillFolderDir(entry.SkillPath), runner)
+		if err != nil {
+			return "", err
+		}
+		return sha, nil
+	}
+	return hash.Dir(found.Dir)
+}
+
 // backfillCommit records the fetched HEAD of an up-to-date git skill, so a following check does not
 // report the moved ref as an available update. It reports whether the lock entry changed.
-func backfillCommit(lock *lockfile.File, entry lockfile.Entry, key, commit string) bool {
+func backfillCommit(lock updateLock, entry updateRecord, key, commit string, env Env) bool {
 	if commit == "" || strings.EqualFold(commit, entry.Commit) {
 		return false
 	}
 	entry.Commit = commit
-	lock.Put(key, entry)
+	if lock.global() {
+		entry.UpdatedAt = timestamp(env.now())
+	}
+	lock.put(key, entry)
 	return true
 }
 
@@ -466,50 +631,92 @@ func locateUpdateSkill(all []skill.Skill, name, skillPath string) (skill.Skill, 
 
 // reinstallSkill installs the fetched skill over every location that currently holds it, keeping
 // the recorded install mode and name, then rewrites the lock entry from what landed on disk.
-func reinstallSkill(env Env, agentEnv agents.Environment, lock *lockfile.File, t updateTask,
-	g *updateGroup, found skill.Skill, installed string, locations []agents.Agent) (UpdateResult, bool) {
+func reinstallSkill(env Env, agentEnv agents.Environment, lock updateLock, t updateTask,
+	g *updateGroup, found skill.Skill, installed string, locations []agents.Agent) (UpdateResult, bool, string) {
 	rename := ""
 	if skill.SanitizeName(found.Name) != installed {
 		rename = installed
 	}
-	mode := updateInstallMode(t.entry, agentEnv, installed, locations)
+	mode := updateInstallMode(t.entry, agentEnv, installed, locations, lock.global())
 	targets := locations
 	if len(targets) == 0 {
 		targets = universalTargets()
 	}
 	entries := install.Plan(env.WorkDir, []skill.Skill{found}, targets, install.PlanOptions{
-		Env: agentEnv, Mode: mode, Rename: rename,
+		Env: agentEnv, Mode: mode, Rename: rename, Global: lock.global(),
 	})
-	results := install.Apply(env.WorkDir, entries)
+	results := install.Apply(applyRoot(env, agentEnv, lock.global()), entries)
 	if message, failed := firstFailure(results); failed {
-		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: message}, false
+		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: message}, false, ""
 	}
 	loc, ok := installedPath(results, entries[0].Name)
 	if !ok {
-		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: "no location accepted the skill"}, false
-	}
-	digest, err := hashInstalled(loc)
-	if err != nil {
-		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false
+		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: "no location accepted the skill"}, false, ""
 	}
 	updated := t.entry
-	updated.ComputedHash = digest
+	updated.SkillPath = found.SkillPath()
 	if g.tree.Commit != "" {
 		updated.Commit = g.tree.Commit
 	}
-	updated.SkillPath = found.SkillPath()
-	lock.Put(t.key, updated)
-	return UpdateResult{Name: t.key, Status: UpdateUpdated}, true
+	warning, err := refreshEntryHash(&updated, loc, lock.global())
+	if err != nil {
+		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false, ""
+	}
+	if lock.global() {
+		updated.UpdatedAt = timestamp(env.now())
+		if updated.InstalledAt == "" {
+			updated.InstalledAt = updated.UpdatedAt
+		}
+	}
+	lock.put(t.key, updated)
+	return UpdateResult{Name: t.key, Status: UpdateUpdated}, true, warning
+}
+
+// refreshEntryHash writes the hash of the new install in the shape the lock records.
+func refreshEntryHash(entry *updateRecord, installed string, global bool) (string, error) {
+	if !global {
+		digest, err := hashInstalled(installed)
+		if err != nil {
+			return "", err
+		}
+		entry.ComputedHash = digest
+		return "", nil
+	}
+	digest, warning, err := globalFolderHash(globalEntryFromUpdate(*entry), installed)
+	if err != nil {
+		return "", err
+	}
+	entry.SkillFolderHash = digest
+	return warning, nil
+}
+
+// globalEntryFromUpdate converts an update entry into the global lock shape, for hashing.
+func globalEntryFromUpdate(e updateRecord) lockfile.GlobalEntry {
+	return lockfile.GlobalEntry{
+		Source: e.Source, SourceType: e.SourceType, SourceURL: e.SourceURL, Ref: e.Ref,
+		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
+		SkillFolderHash: e.SkillFolderHash, InstalledAt: e.InstalledAt, UpdatedAt: e.UpdatedAt,
+	}
+}
+
+// applyRoot is the directory installs must stay inside: the project for a project run, home for a
+// global one.
+func applyRoot(env Env, agentEnv agents.Environment, global bool) string {
+	if global {
+		return agentEnv.Home
+	}
+	return env.WorkDir
 }
 
 // updateInstallMode keeps the shape the skill was installed with: the recorded installMode wins;
 // otherwise the current locations decide, and an existing link is proof of symlink mode.
-func updateInstallMode(entry lockfile.Entry, env agents.Environment, name string, locations []agents.Agent) install.Mode {
+func updateInstallMode(entry updateRecord, env agents.Environment, name string,
+	locations []agents.Agent, global bool) install.Mode {
 	if entry.InstallMode == "copy" {
 		return install.ModeCopy
 	}
 	for _, a := range locations {
-		if info, err := os.Lstat(agentSkillPath(a, env, name)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if info, err := os.Lstat(agentSkillPath(a, env, name, global)); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			return install.ModeSymlink
 		}
 	}
@@ -528,10 +735,10 @@ func firstFailure(results []install.Result) (string, bool) {
 
 // installedAgents lists the agents whose directory currently holds the skill, including the
 // universal agents that point at the canonical directory.
-func installedAgents(env agents.Environment, name string) []agents.Agent {
+func installedAgents(env agents.Environment, name string, global bool) []agents.Agent {
 	var out []agents.Agent
 	for _, a := range agents.All() {
-		if pathExistsForRemoval(agentSkillPath(a, env, name)) {
+		if pathExistsForRemoval(agentSkillPath(a, env, name, global)) {
 			out = append(out, a)
 		}
 	}
@@ -546,7 +753,7 @@ func universalTargets() []agents.Agent {
 
 // updateRecordedName is the upstream name a lock entry was installed from: skillName for a renamed
 // skill, the lock key otherwise.
-func updateRecordedName(e lockfile.Entry, key string) string {
+func updateRecordedName(e updateRecord, key string) string {
 	if e.SkillName != "" {
 		return e.SkillName
 	}

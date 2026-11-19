@@ -14,12 +14,13 @@ import (
 // CheckOptions are the inputs of the check use case.
 type CheckOptions struct {
 	Skills []string      // skill names to check; empty checks every tracked skill
-	Global bool          // global scope; not supported yet
+	Global bool          // check the global scope
 	Runner source.Runner // git runner; nil uses PATH, tests pass a fake
 }
 
 // CheckReport is the outcome of a check run.
 type CheckReport struct {
+	Scope    string
 	Updates  []string // skills with a newer commit upstream
 	Modified []string // skills whose files differ from the lock
 	Failures []string // sources or names that could not be checked
@@ -32,17 +33,34 @@ func (r CheckReport) Failed() bool {
 
 // Check reports available updates and local changes without writing anything.
 func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error) {
-	if opts.Global {
-		return CheckReport{}, fmt.Errorf("%w: global scope is not supported yet", ErrUsage)
-	}
 	agentEnv := env.agentsEnv()
-	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
-	lock, err := lockfile.Load(lockPath)
-	if err != nil {
-		return CheckReport{}, err
+	var (
+		lock      *lockfile.File
+		global    *lockfile.GlobalFile
+		installed []installedSkill
+		keys      []string
+		matched   []comparedSkill
+	)
+	report := CheckReport{Scope: scopeName(opts.Global)}
+	if opts.Global {
+		globalLock, err := lockfile.LoadGlobal(agents.GlobalLockPath(agentEnv))
+		if err != nil {
+			return CheckReport{}, err
+		}
+		global = globalLock
+		installed = scanInstalled(agentEnv, agents.All(), false, env.IncludeInternal, true)
+		matched, _ = compareGlobalLock(global, installed)
+		keys = globalLockKeys(global)
+	} else {
+		projectLock, err := lockfile.Load(filepath.Join(env.WorkDir, lockfile.FileName))
+		if err != nil {
+			return CheckReport{}, err
+		}
+		lock = projectLock
+		installed = scanInstalled(agentEnv, agents.All(), false, env.IncludeInternal, false)
+		matched, _ = compareLock(lock, installed)
+		keys = lockKeys(lock)
 	}
-	installed := scanInstalled(agentEnv, agents.All(), false, env.IncludeInternal)
-	matched, _ := compareLock(lock, installed)
 	byKey := map[string]comparedSkill{}
 	for _, c := range matched {
 		if c.LockKey == "" {
@@ -53,13 +71,12 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		}
 	}
 
-	selected, unmatched := selectCheckKeys(lock, opts.Skills)
-	report := CheckReport{}
+	selected, unmatched := selectCheckKeys(keys, opts.Skills)
 	for _, name := range unmatched {
 		report.Failures = append(report.Failures,
 			fmt.Sprintf("%s: no installed skill matches this name", name))
 	}
-	for _, key := range lockKeys(lock) {
+	for _, key := range keys {
 		if len(opts.Skills) > 0 && !selected[key] {
 			continue
 		}
@@ -70,7 +87,7 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		if c.Status == StatusModified {
 			report.Modified = append(report.Modified, key)
 		}
-		update, err := checkUpdate(ctx, c, opts.Runner)
+		update, err := checkUpdate(ctx, c.Ref, opts.Runner)
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", key, err))
 			continue
@@ -83,7 +100,7 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 }
 
 // selectCheckKeys resolves the optional name filter, reporting the names that match no lock key.
-func selectCheckKeys(lock *lockfile.File, names []string) (map[string]bool, []string) {
+func selectCheckKeys(keys []string, names []string) (map[string]bool, []string) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -91,7 +108,7 @@ func selectCheckKeys(lock *lockfile.File, names []string) (map[string]bool, []st
 	var unmatched []string
 	for _, name := range names {
 		found := false
-		for key := range lock.Skills {
+		for _, key := range keys {
 			if strings.EqualFold(key, name) {
 				selected[key] = true
 				found = true
@@ -106,28 +123,28 @@ func selectCheckKeys(lock *lockfile.File, names []string) (map[string]bool, []st
 
 // checkUpdate reports whether the recorded ref moved upstream. Local sources never have updates,
 // and a source type this build cannot fetch is reported as uncheckable.
-func checkUpdate(ctx context.Context, c comparedSkill, runner source.Runner) (bool, error) {
-	switch c.Entry.SourceType {
+func checkUpdate(ctx context.Context, entry lockRef, runner source.Runner) (bool, error) {
+	switch entry.SourceType {
 	case "local":
 		return false, nil
 	case "github", "gitlab", "git":
 	case "":
 		return false, fmt.Errorf("the lock entry has no source type")
 	default:
-		return false, fmt.Errorf("cannot check a %s source", c.Entry.SourceType)
+		return false, fmt.Errorf("cannot check a %s source", entry.SourceType)
 	}
-	raw := c.Entry.Source
-	if c.Entry.SourceURL != "" {
-		raw = c.Entry.SourceURL
+	raw := entry.Source
+	if entry.SourceURL != "" {
+		raw = entry.SourceURL
 	}
 	src, err := source.Parse(raw)
 	if err != nil {
 		return false, err
 	}
-	src.Ref = c.Entry.Ref
+	src.Ref = entry.Ref
 	head, err := source.RemoteHead(ctx, src, runner)
 	if err != nil {
 		return false, err
 	}
-	return c.Entry.Commit == "" || !strings.EqualFold(head, c.Entry.Commit), nil
+	return entry.Commit == "" || !strings.EqualFold(head, entry.Commit), nil
 }

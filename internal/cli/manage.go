@@ -63,7 +63,11 @@ func WriteListJSON(w io.Writer, entries []ListEntry) error {
 // WriteList prints the human listing: one aligned name/path line per skill followed by its agents
 // and lock source, then the lock entries that have no directory on disk.
 func WriteList(w io.Writer, rep app.ListReport) {
-	fmt.Fprintln(w, "Project Skills")
+	header, empty, hint := "Project Skills", "No project skills found.", "Try listing global skills with -g"
+	if rep.Scope == string(app.ScopeGlobal) {
+		header, empty, hint = "Global Skills", "No global skills found.", "Try listing project skills without -g"
+	}
+	fmt.Fprintln(w, header)
 	fmt.Fprintln(w)
 
 	var shown, missing []app.SkillInfo
@@ -75,8 +79,8 @@ func WriteList(w io.Writer, rep app.ListReport) {
 		shown = append(shown, s)
 	}
 	if len(shown) == 0 && len(missing) == 0 {
-		fmt.Fprintln(w, "No project skills found.")
-		fmt.Fprintln(w, "Try listing global skills with -g")
+		fmt.Fprintln(w, empty)
+		fmt.Fprintln(w, hint)
 		return
 	}
 
@@ -113,8 +117,16 @@ func WriteCheck(w io.Writer, rep app.CheckReport) {
 		fmt.Fprintf(w, "✗ %s\n", displayText(failure))
 	}
 	if !rep.Failed() {
-		fmt.Fprintln(w, "✓ All project skills are up to date")
+		fmt.Fprintf(w, "✓ All %s skills are up to date\n", checkScope(rep.Scope))
 	}
+}
+
+// checkScope is the scope word of the check summary.
+func checkScope(scope string) string {
+	if scope == string(app.ScopeGlobal) {
+		return "global"
+	}
+	return "project"
 }
 
 // agentList renders the agent names, collapsing the tail when there are too many. No agents means

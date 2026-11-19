@@ -26,7 +26,7 @@ type RemoveOptions struct {
 	Agents []string // agent identifiers, or "*"; empty targets every agent that has the skill
 	All    bool     // every lock-tracked skill; implies --agent '*' and -y
 	Yes    bool     // remove without confirming
-	Global bool     // global scope; not supported yet
+	Global bool     // remove from the global scope
 }
 
 // RemoveStatus is the outcome of removing one skill from one agent.
@@ -107,9 +107,6 @@ func Remove(opts RemoveOptions, env Env, prompters ...Prompter) (RemoveReport, e
 	if len(prompters) > 0 {
 		prompter = prompters[0]
 	}
-	if opts.Global {
-		return RemoveReport{}, fmt.Errorf("%w: global scope is not supported yet", ErrUsage)
-	}
 	allMode, names, err := removeSelection(opts)
 	if err != nil {
 		return RemoveReport{}, err
@@ -121,19 +118,25 @@ func Remove(opts RemoveOptions, env Env, prompters ...Prompter) (RemoveReport, e
 	}
 	explicitFilter := !everyAgentRequested(opts.Agents)
 
-	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
-	lock, err := lockfile.Load(lockPath)
+	lock, err := loadRemoveLock(env, agentEnv, opts.Global)
 	if err != nil {
 		return RemoveReport{}, err
 	}
-	installed := scanInstalled(agentEnv, agents.All(), false, env.IncludeInternal)
-	matched, missing := compareLock(lock, installed)
-	catalog := removeCatalog(matched, missing, lock)
+	installed := scanInstalled(agentEnv, agents.All(), false, env.IncludeInternal, opts.Global)
+	var matched []comparedSkill
+	var missing []missingSkill
+	if opts.Global {
+		globalLock, _ := lock.globalFile()
+		matched, missing = compareGlobalLock(globalLock, installed)
+	} else {
+		matched, missing = compareLock(lock.projectFile(), installed)
+	}
+	catalog := removeCatalog(matched, missing)
 
 	report := RemoveReport{}
 	if allMode {
 		report.Notes = untrackedNotes(matched)
-		if len(lock.Skills) == 0 {
+		if len(lock.keys()) == 0 {
 			return report, fmt.Errorf("%w: no lock-tracked skills found to remove", ErrNoMatch)
 		}
 	}
@@ -177,7 +180,65 @@ func Remove(opts RemoveOptions, env Env, prompters ...Prompter) (RemoveReport, e
 	}
 
 	universal := universalSelected(selected)
-	return executeRemove(agentEnv, lock, lockPath, targets, selected, universal, explicitFilter, report)
+	return executeRemove(agentEnv, lock, targets, selected, universal, explicitFilter, opts.Global, report)
+}
+
+// removeLock is the lock of the scope, so removal code does not care which version it is.
+type removeLock struct {
+	project *lockfile.File
+	global  *lockfile.GlobalFile
+	path    string
+}
+
+// loadRemoveLock reads the selected scope's lock.
+func loadRemoveLock(env Env, agentEnv agents.Environment, global bool) (removeLock, error) {
+	if global {
+		path := agents.GlobalLockPath(agentEnv)
+		lock, err := lockfile.LoadGlobal(path)
+		return removeLock{global: lock, path: path}, err
+	}
+	path := filepath.Join(env.WorkDir, lockfile.FileName)
+	lock, err := lockfile.Load(path)
+	return removeLock{project: lock, path: path}, err
+}
+
+func (l removeLock) projectFile() *lockfile.File { return l.project }
+
+func (l removeLock) globalFile() (*lockfile.GlobalFile, bool) { return l.global, l.global != nil }
+
+// keys returns the lock keys in sorted order.
+func (l removeLock) keys() []string {
+	if l.global != nil {
+		return globalLockKeys(l.global)
+	}
+	return lockKeys(l.project)
+}
+
+// source returns the recorded source of a key.
+func (l removeLock) source(key string) (string, bool) {
+	if l.global != nil {
+		entry, ok := l.global.Get(key)
+		return entry.Source, ok
+	}
+	entry, ok := l.project.Get(key)
+	return entry.Source, ok
+}
+
+// delete removes one key from the lock.
+func (l removeLock) delete(key string) {
+	if l.global != nil {
+		l.global.Delete(key)
+		return
+	}
+	l.project.Delete(key)
+}
+
+// save writes the lock.
+func (l removeLock) save() error {
+	if l.global != nil {
+		return l.global.Save(l.path)
+	}
+	return l.project.Save(l.path)
 }
 
 // removeSelection normalises --all and --skill '*' and refuses to combine them with names.
@@ -235,7 +296,7 @@ func universalSelected(selected []agents.Agent) bool {
 
 // removeCatalog lists every skill that can be selected, tracked or not. Tracked entries win, so a
 // sanitized lock key and the folder it names collapse into one target.
-func removeCatalog(matched []comparedSkill, missing []string, lock *lockfile.File) []removeTarget {
+func removeCatalog(matched []comparedSkill, missing []missingSkill) []removeTarget {
 	index := map[string]int{}
 	var out []removeTarget
 	add := func(t removeTarget) {
@@ -255,25 +316,21 @@ func removeCatalog(matched []comparedSkill, missing []string, lock *lockfile.Fil
 		if c.LockKey != "" {
 			name = c.LockKey
 		}
-		t := removeTarget{
+		add(removeTarget{
 			Name:    name,
 			DirName: skill.SanitizeName(name),
 			LockKey: c.LockKey,
+			Source:  c.Ref.Source,
 			Path:    c.Path,
 			Agents:  c.Agents,
-		}
-		if c.LockKey != "" {
-			t.Source = c.Entry.Source
-		}
-		add(t)
+		})
 	}
-	for _, key := range missing {
-		entry, _ := lock.Get(key)
+	for _, m := range missing {
 		add(removeTarget{
-			Name:    key,
-			DirName: skill.SanitizeName(key),
-			LockKey: key,
-			Source:  entry.Source,
+			Name:    m.Key,
+			DirName: skill.SanitizeName(m.Key),
+			LockKey: m.Key,
+			Source:  m.Ref.Source,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -318,20 +375,20 @@ func untrackedNotes(matched []comparedSkill) []string {
 }
 
 // lockTargets returns one target per lock key, including stale entries with no directory.
-func lockTargets(lock *lockfile.File, catalog []removeTarget) []removeTarget {
+func lockTargets(lock removeLock, catalog []removeTarget) []removeTarget {
 	byKey := catalogByLockKey(catalog)
 	var out []removeTarget
-	for _, key := range lockKeys(lock) {
+	for _, key := range lock.keys() {
 		if t, ok := byKey[key]; ok {
 			out = append(out, t)
 			continue
 		}
-		entry, _ := lock.Get(key)
+		source, _ := lock.source(key)
 		out = append(out, removeTarget{
 			Name:    key,
 			DirName: skill.SanitizeName(key),
 			LockKey: key,
-			Source:  entry.Source,
+			Source:  source,
 		})
 	}
 	return out
@@ -361,7 +418,7 @@ func targetsByLockKey(catalog []removeTarget, keys []string) []removeTarget {
 
 // resolveRemoveTargets matches every requested name against installed names, sanitized names and
 // lock keys, then falls back to an exact lock source. It returns the names that matched nothing.
-func resolveRemoveTargets(names []string, catalog []removeTarget, lock *lockfile.File) ([]removeTarget, []string) {
+func resolveRemoveTargets(names []string, catalog []removeTarget, lock removeLock) ([]removeTarget, []string) {
 	byKey := catalogByLockKey(catalog)
 	seen := map[string]bool{}
 	var out []removeTarget
@@ -383,9 +440,9 @@ func resolveRemoveTargets(names []string, catalog []removeTarget, lock *lockfile
 			continue
 		}
 		found := false
-		for _, key := range lockKeys(lock) {
-			entry, _ := lock.Get(key)
-			if entry.Source != query {
+		for _, key := range lock.keys() {
+			source, _ := lock.source(key)
+			if source != query {
 				continue
 			}
 			found = true
@@ -397,7 +454,7 @@ func resolveRemoveTargets(names []string, catalog []removeTarget, lock *lockfile
 				Name:    key,
 				DirName: skill.SanitizeName(key),
 				LockKey: key,
-				Source:  entry.Source,
+				Source:  source,
 			})
 		}
 		if !found {
@@ -461,7 +518,7 @@ func removeChoices(matched []comparedSkill) []SkillChoice {
 		if c.LockKey == "" || c.Path == "" {
 			continue
 		}
-		source := c.Entry.Source
+		source := c.Ref.Source
 		if source == "" {
 			source = "untracked"
 		}
@@ -542,17 +599,17 @@ func removePromptRequired(isTTY bool) error {
 
 // executeRemove deletes the selected directories, then the canonical copy and lock entry when
 // nothing else uses them. Failures are collected per target, never rolled back.
-func executeRemove(agentEnv agents.Environment, lock *lockfile.File, lockPath string,
-	targets []removeTarget, selected []agents.Agent, universal, explicitFilter bool,
+func executeRemove(agentEnv agents.Environment, lock removeLock,
+	targets []removeTarget, selected []agents.Agent, universal, explicitFilter, global bool,
 	report RemoveReport) (RemoveReport, error) {
-	canonicalDir := agents.CanonicalSkillsDir(agentEnv, false)
+	canonicalDir := scopeCanonicalDir(agentEnv, global)
 	lockChanged := false
 	for _, t := range targets {
 		for _, a := range selected {
-			if a.Universal {
+			if a.Universal && sameDir(a.BaseDir(agentEnv, global), canonicalDir) {
 				continue
 			}
-			path := agentSkillPath(a, agentEnv, t.DirName)
+			path := agentSkillPath(a, agentEnv, t.DirName, global)
 			if _, err := os.Lstat(path); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					if explicitFilter {
@@ -568,14 +625,14 @@ func executeRemove(agentEnv agents.Environment, lock *lockfile.File, lockPath st
 				continue
 			}
 			report.Results = append(report.Results, removeAtResult(t, a.ID, path,
-				a.BaseDir(agentEnv, false)))
+				a.BaseDir(agentEnv, global)))
 		}
 
 		canonicalPath := filepath.Join(canonicalDir, t.DirName)
 		canonicalExists := pathExistsForRemoval(canonicalPath)
 		switch {
 		case canonicalExists && universal:
-			users := remainingUsers(agents.All(), agentEnv, t.DirName, canonicalPath)
+			users := remainingUsers(agents.All(), agentEnv, t.DirName, canonicalPath, global)
 			res := RemoveResult{Skill: t.Name, Agent: "universal", Path: canonicalPath}
 			if len(users) > 0 {
 				res.Status = RemoveSkipped
@@ -597,35 +654,40 @@ func executeRemove(agentEnv agents.Environment, lock *lockfile.File, lockPath st
 		if t.LockKey == "" {
 			continue
 		}
-		if !skillRemains(agents.All(), agentEnv, t.DirName, canonicalPath) {
-			lock.Delete(t.LockKey)
+		if !skillRemains(agents.All(), agentEnv, t.DirName, canonicalPath, global) {
+			lock.delete(t.LockKey)
 			lockChanged = true
 			report.Notes = append(report.Notes, "removed lock entry "+t.LockKey)
 		}
 	}
 	if lockChanged {
-		if err := lock.Save(lockPath); err != nil {
+		if err := lock.save(); err != nil {
 			return report, err
 		}
-		report.LockPath = lockPath
+		report.LockPath = lock.path
 	}
 	return report, nil
 }
 
+// sameDir reports whether two paths name the same directory without touching the filesystem.
+func sameDir(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
 // agentSkillPath is where an install puts the skill for an agent. Eve consumes a flat file.
-func agentSkillPath(a agents.Agent, env agents.Environment, dirName string) string {
+func agentSkillPath(a agents.Agent, env agents.Environment, dirName string, global bool) string {
 	if a.ID == "eve" {
-		return filepath.Join(a.BaseDir(env, false), dirName+".md")
+		return filepath.Join(a.BaseDir(env, global), dirName+".md")
 	}
-	return filepath.Join(a.BaseDir(env, false), dirName)
+	return filepath.Join(a.BaseDir(env, global), dirName)
 }
 
 // remainingUsers lists the agents whose directory still holds the skill, ignoring the canonical
 // directory itself, which every universal agent shares.
-func remainingUsers(all []agents.Agent, env agents.Environment, dirName, canonicalPath string) []string {
+func remainingUsers(all []agents.Agent, env agents.Environment, dirName, canonicalPath string, global bool) []string {
 	var users []string
 	for _, a := range all {
-		path := agentSkillPath(a, env, dirName)
+		path := agentSkillPath(a, env, dirName, global)
 		if filepath.Clean(path) == filepath.Clean(canonicalPath) {
 			continue
 		}
@@ -636,16 +698,19 @@ func remainingUsers(all []agents.Agent, env agents.Environment, dirName, canonic
 	return users
 }
 
-// skillRemains reports whether any agent directory, legacy skills directory or the canonical
-// directory still has the skill.
-func skillRemains(all []agents.Agent, env agents.Environment, dirName, canonicalPath string) bool {
+// skillRemains reports whether any agent directory, legacy project skills directory or the
+// canonical directory still has the skill.
+func skillRemains(all []agents.Agent, env agents.Environment, dirName, canonicalPath string, global bool) bool {
 	if pathExistsForRemoval(canonicalPath) {
 		return true
 	}
 	for _, a := range all {
-		if pathExistsForRemoval(agentSkillPath(a, env, dirName)) {
+		if pathExistsForRemoval(agentSkillPath(a, env, dirName, global)) {
 			return true
 		}
+	}
+	if global {
+		return false
 	}
 	for _, rel := range agents.ProjectSkillDirs() {
 		if pathExistsForRemoval(filepath.Join(env.Cwd, filepath.FromSlash(rel), dirName)) {

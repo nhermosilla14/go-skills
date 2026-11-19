@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/nhermosilla14/go-skills/internal/fsutil"
 )
@@ -15,8 +16,11 @@ import (
 // FileName is the project lock file name, placed at the project root.
 const FileName = "skills-lock.json"
 
-// Version is the only project lock version written, and the only one read.
+// Version is the project lock version written.
 const Version = 2
+
+// legacyVersion is the version 1 project lock, accepted and migrated in memory on read.
+const legacyVersion = 1
 
 // Entry describes one installed skill. Unknown fields are kept in extra and written back.
 type Entry struct {
@@ -45,8 +49,9 @@ func New() *File {
 	return &File{Skills: map[string]Entry{}}
 }
 
-// Load reads the lock at path. A missing file yields an empty document; a file that is not a
-// version 2 lock is an error and is left alone.
+// Load reads the lock at path. A missing file yields an empty document. A version 1 document is
+// upgraded in memory and persisted by the next write; any other version or a malformed file is an
+// error and is left alone.
 func Load(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -55,37 +60,41 @@ func Load(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := decode(data)
+	f, version, err := decode(data)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if version == legacyVersion {
+		f.migrateLegacy(filepath.Dir(path))
 	}
 	return f, nil
 }
 
-func decode(data []byte) (*File, error) {
+func decode(data []byte) (*File, int, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return nil, 0, fmt.Errorf("invalid JSON: %w", err)
 	}
 	var version int
-	if err := json.Unmarshal(top["version"], &version); err != nil || version != Version {
-		return nil, fmt.Errorf("unsupported lock version %s, expected %d", top["version"], Version)
+	if err := json.Unmarshal(top["version"], &version); err != nil ||
+		(version != Version && version != legacyVersion) {
+		return nil, 0, fmt.Errorf("unsupported lock version %s, expected %d", top["version"], Version)
 	}
 	f := New()
 	if err := json.Unmarshal(top["skills"], &f.Skills); err != nil {
-		return nil, fmt.Errorf("invalid skills map: %w", err)
+		return nil, 0, fmt.Errorf("invalid skills map: %w", err)
 	}
 	if f.Skills == nil {
-		return nil, errors.New("missing skills map")
+		return nil, 0, errors.New("missing skills map")
 	}
 	delete(top, "version")
 	delete(top, "skills")
 	extra, err := compactAll(top)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	f.extra = extra
-	return f, nil
+	return f, version, nil
 }
 
 // Save writes the document to path atomically, with sorted keys and two-space indentation.
