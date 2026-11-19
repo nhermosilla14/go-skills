@@ -8,10 +8,10 @@ scope behind the project.
 
 ## Status
 
-Early development. There is no release yet, no Go code and no `go.mod`; the repository currently
-holds the project scaffolding and the reference documentation under `olddocs/`. Nothing described
-under Usage below works until the corresponding milestone lands, and each entry is marked `TODO`
-until then.
+Early development. There is no release yet. The walking skeleton works: `add` installs from a
+local directory for the `opencode` and `claude-code` agents, writes a v2 `skills-lock.json`, and
+implements the hash contract. Everything else is marked `TODO` and arrives slice by slice; see
+`docs/branch/slices/` for the plan and `docs/spec/` for what is delivered.
 
 ## Prerequisites
 
@@ -19,29 +19,40 @@ until then.
 - `git`, used to fetch sources and to run the repository scripts.
 - No Node.js runtime. Installing the upstream CLI is not required or used.
 
-`task` is optional: it runs the same commands documented in Development guidelines.
+`task` is optional and arrives with the release slice: it will run the same commands documented in
+Development guidelines.
 
 ## Getting started
 
 ```sh
 git clone https://github.com/nhermosilla14/go-skills.git
 cd go-skills
-task build            # or: go build -o skills .
+go build -o skills ./cmd/skills
 ./skills --help
 ```
 
-`TODO`: the build commands fail until `go.mod` and `cmd/skills` exist. Until then, only the docs,
-the scripts and the CI workflow are usable.
+Version metadata is injected at build time; a plain `go build` reports development defaults:
+
+```sh
+go build -ldflags "-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o skills ./cmd/skills
+```
 
 ## Usage
 
 The command surface is planned to match upstream v1.9.0, minus the npm library API and the
-`node_modules`/workspace sync. Nothing below is implemented yet: every command is `TODO`, and
-options, output and exit codes are not final until `docs/spec/` describes them.
+`node_modules`/workspace sync. Options, output and exit codes are not final until `docs/spec/`
+describes them; commands marked `TODO` exit with a usage error.
+
+Current, working subset:
+
+```sh
+./skills add ./path/to/skills -a opencode -a claude-code -y
+./skills add ./path/to/skills --list
+```
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills from a source into agent directories. | `TODO` |
+| `add` | Install skills from a local directory. Remote sources, prompts and `--json` are `TODO`. | Partial |
 | `list` | List installed skills and compare them with the project lock file. | `TODO` |
 | `remove` | Remove installed skills and their lock entries. | `TODO` |
 | `update` | Re-resolve tracked skills to newer revisions. | `TODO` |
@@ -82,7 +93,7 @@ the targets CI and release builds must cover.
 .
 ├── AGENTS.md                  Rules and conventions for humans and agents
 ├── README.md                  This file
-├── Taskfile.yml               Build, test, lint and release tasks
+├── Taskfile.yml               Build, test, lint and release tasks (TODO: slice 04)
 ├── cmd/
 │   └── skills/                `package main`: flag parsing, dispatch, wiring (TODO)
 ├── internal/                  Implementation packages, not importable from outside the module (TODO)
@@ -120,8 +131,8 @@ go vet ./...
 gofmt -l .        # must print nothing; `go tool gofmt -l .` if gofmt is not on PATH
 ```
 
-`golangci-lint` v2 is the linter. The Taskfile wraps the common cases: `task build`, `task test`,
-`task lint`, `task release:snapshot`.
+`golangci-lint` v2 is the linter. The Taskfile planned for slice 04 wraps the common cases:
+`task build`, `task test`, `task lint`, `task release:snapshot`.
 
 Work follows the loop Requirements → Design → Slices → Code → Test, one vertical slice at a time,
 with each stage reviewed before the next. The rules are summarized in [`AGENTS.md`](AGENTS.md) and

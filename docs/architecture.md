@@ -1,8 +1,9 @@
 # Architecture
 
-Status: scaffolding only. There is no implementation yet; the shape below is the starting plan and
-is updated by every slice. For the forces behind the project see `docs/vision.md`; for decisions see
-`docs/adr/`.
+Status: slice 01 delivered. The CLI shell, local `add`, skill discovery, the content hash, the
+project lock and the two-agent install path exist. The diagram and the package list below include
+the planned shape of later slices and are updated as they land. For the forces behind the project
+see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 
 ## Shape
 
@@ -28,20 +29,24 @@ is updated by every slice. For the forces behind the project see `docs/vision.md
         └───────────┘   └──────────┘  └──────────────┘
 ```
 
-## Planned packages
+## Packages
 
-| Path | Responsibility |
-|---|---|
-| `cmd/skills` | Entry point: argument parsing, command dispatch, user-facing errors, exit codes. |
-| `internal/cli` | Flag model, help text, TUI prompts and non-interactive equivalents, output rendering (`--json`). |
-| `internal/app` | Use cases orchestrating the rest; no filesystem or network code of its own. |
-| `internal/source` | Source grammar, refs, providers, downloads, archives, authentication ladder, temp trees. |
-| `internal/skill` | `SKILL.md` parsing and rewriting, discovery, sanitization, skill selection, rename. |
-| `internal/agents` | Agent registry, per-OS path resolution, detection, canonical directory and install-mode rules. |
-| `internal/install` | Install planning and execution: files, links, copies, overwrite rules, per-agent quirks. |
-| `internal/lockfile` | Project and global lock schemas, read/write with atomicity, status comparison. |
-| `internal/hash` | The two content-hash contracts and their test vectors. |
-| `internal/fsutil` | Atomic writes, locking, realpath containment, platform-specific link/junction helpers. |
+| Path | Responsibility | State |
+|---|---|---|
+| `cmd/skills` | Entry point: dispatch, user-facing errors, exit codes, build metadata. | delivered |
+| `internal/cli` | Argument parser, help, output rendering. TUI and `--json` are planned. | partial |
+| `internal/app` | Use cases (`Add`); source resolution; no command syntax. | partial |
+| `internal/skill` | `SKILL.md` parsing, discovery, sanitization. Rewriting and rename are planned. | partial |
+| `internal/agents` | Agent registry and path rules (two entries; the other 77 are planned). | partial |
+| `internal/install` | Plan and apply: canonical copy, relative links, copies, fallbacks. | partial |
+| `internal/lockfile` | Project lock v2, atomic write, unknown-field preservation. Global lock is planned. | partial |
+| `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
+| `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
+| `internal/source` | Source grammar, fetches, authentication. | planned |
+| `e2e/` | Built-binary tests with their fixtures. | partial |
+
+The clock seam is `app.Env.Now`; no package calls `time.Now` directly except `cmd/skills`, which
+wires the real clock. `internal/source`, TUI packages and the global lock do not exist yet.
 
 Interfaces are defined when the first slice needs them, not up front. Network, git and clock
 access sit behind small interfaces so tests run offline.
