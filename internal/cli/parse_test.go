@@ -569,6 +569,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 		"remove, rm, r", "--all", "update, upgrade", "--project",
 		"experimental_install", "Restore options:", "--dry-run",
 		"--frozen-lockfile", "--no-frozen-lockfile", "JENKINS_URL", "init [name]",
+		"find, f, s, search", "Find options:", "--owner <owner>",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)
@@ -576,5 +577,79 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	}
 	if !strings.Contains(help, "--global") {
 		t.Error("help misses the global scope flag")
+	}
+}
+
+func TestParseFind(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want FindOptions
+	}{
+		{"find with one word", []string{"find", "react"}, FindOptions{Query: "react"}},
+		{"f alias", []string{"f", "react"}, FindOptions{Query: "react"}},
+		{"s alias", []string{"s", "react"}, FindOptions{Query: "react"}},
+		{"search alias", []string{"search", "react"}, FindOptions{Query: "react"}},
+		{"positionals join with single spaces", []string{"find", "react", "native"},
+			FindOptions{Query: "react native"}},
+		{"owner is trimmed and lowercased", []string{"find", "react", "--owner", " Vercel "},
+			FindOptions{Query: "react", Owner: "vercel"}},
+		{"last owner wins", []string{"find", "react", "--owner", "first", "--owner=Second"},
+			FindOptions{Query: "react", Owner: "second"}},
+		{"no query", []string{"find"}, FindOptions{}},
+		{"double dash", []string{"find", "--", "--weird"}, FindOptions{Query: "--weird"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cmd.Kind != KindFind {
+				t.Fatalf("Kind = %v, want KindFind", cmd.Kind)
+			}
+			if !reflect.DeepEqual(cmd.Find, tc.want) {
+				t.Errorf("Find = %+v, want %+v", cmd.Find, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFindRejectsBadOwnerAndOptions(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"find", "react", "--owner"}, "--owner requires a GitHub owner"},
+		{[]string{"find", "react", "--owner="}, "--owner requires a GitHub owner"},
+		{[]string{"find", "react", "--owner", "bad_owner"}, "--owner must be a valid GitHub owner"},
+		{[]string{"find", "react", "--owner", strings.Repeat("a", 40)},
+			"--owner must be a valid GitHub owner"},
+		{[]string{"find", "react", "--json"}, "unknown option '--json'"},
+		{[]string{"find", "react", "-y"}, "unknown option '-y'"},
+	}
+	for _, tc := range tests {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			_, err := Parse(tc.args)
+			var usage *UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("err = %v, want UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseFindHelp(t *testing.T) {
+	for _, args := range [][]string{{"find", "-h"}, {"find", "--help"}} {
+		cmd, err := Parse(args)
+		if err != nil {
+			t.Fatalf("Parse %v: %v", args, err)
+		}
+		if cmd.Kind != KindHelp {
+			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		}
 	}
 }

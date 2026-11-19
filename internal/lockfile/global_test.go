@@ -188,3 +188,36 @@ func TestGlobalDeletedLastEntryKeepsEmptySkills(t *testing.T) {
 		t.Errorf("document = %s, want an empty skills map", raw)
 	}
 }
+
+func TestGlobalDismissedPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), GlobalFileName)
+	in := `{"version":3,"skills":{},"dismissed":{"yes":true,"no":false,"text":"true","other":1}}`
+	if err := os.WriteFile(path, []byte(in), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	for name, want := range map[string]bool{"yes": true, "no": false, "text": false, "other": false, "missing": false} {
+		if got := f.DismissedPrompt(name); got != want {
+			t.Errorf("DismissedPrompt(%q) = %v, want %v", name, got, want)
+		}
+	}
+	f.DismissPrompt("findSkillsPrompt")
+	if !f.DismissedPrompt("findSkillsPrompt") {
+		t.Fatal("DismissPrompt did not record the flag")
+	}
+	if err := f.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"findSkillsPrompt": true`, `"yes": true`, `"other": 1`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("document misses %q:\n%s", want, raw)
+		}
+	}
+}

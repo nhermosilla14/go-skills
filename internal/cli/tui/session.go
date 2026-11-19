@@ -20,13 +20,15 @@ type Options struct {
 	ASCII bool
 }
 
-// Session implements app.Prompter over a terminal. It starts one program on the first run and
-// refuses to run a second.
+// Session implements app.Prompter over a terminal. It starts one program for the add flow and
+// refuses a second; the one-time find-skills offer gets its own program because it runs after the
+// flow has finished.
 type Session struct {
-	in   io.Reader
-	out  io.Writer
-	opts Options
-	used bool
+	in        io.Reader
+	out       io.Writer
+	opts      Options
+	used      bool
+	offerUsed bool
 }
 
 // New returns a session that reads keys from in and renders on out, which must be the human
@@ -62,6 +64,38 @@ func (s *Session) Ask(questions app.Questions) (app.Answers, error) {
 		return app.Answers{}, app.ErrCancelled
 	}
 	return done.answers, nil
+}
+
+// The one-time find-skills offer, as documented.
+const (
+	findSkillsQuestion = "Install the find-skills skill? It helps your agent discover and suggest skills."
+	findSkillsNote     = "One-time prompt - you won't be asked again if you dismiss."
+)
+
+// AskFindSkillsOffer asks the one-time find-skills question in its own program. A cancelled prompt
+// returns app.ErrCancelled so the caller can treat it as a decline.
+func (s *Session) AskFindSkillsOffer() (bool, error) {
+	if s.offerUsed {
+		return false, errors.New("find-skills prompt already finished")
+	}
+	s.offerUsed = true
+	model := newOfferPrompt(newTheme(s.out, s.opts.Color, s.opts.ASCII))
+	program := tea.NewProgram(model,
+		tea.WithInput(cancelableInput(s.in)),
+		tea.WithOutput(s.out),
+	)
+	final, err := program.Run()
+	if err != nil {
+		return false, fmt.Errorf("find-skills prompt failed: %w", err)
+	}
+	done, ok := final.(*offerPrompt)
+	if !ok {
+		return false, errors.New("find-skills prompt returned an unexpected model")
+	}
+	if done.cancelled || !done.done {
+		return false, app.ErrCancelled
+	}
+	return done.accepted, nil
 }
 
 // cancelableInput wraps the input so the end of the stream becomes ctrl+c. Bubble Tea stops

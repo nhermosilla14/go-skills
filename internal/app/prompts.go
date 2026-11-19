@@ -50,6 +50,8 @@ const (
 	StepRemoveSkills StepID = "remove-skills"
 	// StepRemoveConfirm is the yes/no before removing the selected skills.
 	StepRemoveConfirm StepID = "remove-confirm"
+	// StepFindSkillsOffer is the one-time suggestion to install find-skills after an install.
+	StepFindSkillsOffer StepID = "find-skills-offer"
 )
 
 // Answers are the decisions of one interactive run. Every field is plain data so the use case
@@ -288,4 +290,26 @@ func (s *Scripted) Ask(q Questions) (Answers, error) {
 // Asked returns the questions the flow asked, in order.
 func (s *Scripted) Asked() []Questions {
 	return s.asked
+}
+
+// OfferScripted is an OfferPrompter test double: it answers the one-time find-skills question with
+// a fixed answer and records that it was asked.
+type OfferScripted struct {
+	Accept bool
+	Err    error
+	asked  int
+}
+
+// AskFindSkillsOffer answers the offer.
+func (o *OfferScripted) AskFindSkillsOffer() (bool, error) {
+	o.asked++
+	if o.Err != nil {
+		return false, o.Err
+	}
+	return o.Accept, nil
+}
+
+// Asked reports how many times the offer was asked.
+func (o *OfferScripted) Asked() int {
+	return o.asked
 }

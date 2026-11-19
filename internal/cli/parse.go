@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/nhermosilla14/go-skills/internal/app"
@@ -20,6 +21,7 @@ const (
 	KindRestore
 	KindUse
 	KindInit
+	KindFind
 )
 
 // Command is a parsed command line.
@@ -33,8 +35,16 @@ type Command struct {
 	Restore app.RestoreOptions // set when Kind is KindRestore
 	Use     UseOptions         // set when Kind is KindUse
 	Init    app.InitOptions    // set when Kind is KindInit
+	Find    FindOptions        // set when Kind is KindFind
 	UseHelp bool               // use asked for its own help
 	JSON    bool               // --json, for list
+}
+
+// FindOptions is the parsed `find` command line. An empty Query means the interactive prompt or,
+// without a terminal, the usage tip.
+type FindOptions struct {
+	Query string
+	Owner string
 }
 
 // UseOptions is the parsed `use` command line before validation. Skills and Agents keep every
@@ -75,6 +85,8 @@ func Parse(args []string) (Command, error) {
 		return parseRemove(args[1:])
 	case name == "use":
 		return parseUse(args[1:])
+	case name == "find" || name == "f" || name == "s" || name == "search":
+		return parseFind(args[1:])
 	case name == "init":
 		return parseInit(args[1:])
 	case strings.HasPrefix(name, "-"):
@@ -901,6 +913,73 @@ func (p *useParser) repeatable(args []string, i int, name, inline string, hasInl
 		p.opts.Skills = append(p.opts.Skills, values...)
 	}
 	return last, nil
+}
+
+// ownerPattern is the GitHub owner grammar a search filter must satisfy.
+var ownerPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38})$`)
+
+// parseFind parses `find`, `f`, `s` and `search`: positionals form the query, --owner filters by
+// GitHub owner, and every other option is a usage error.
+func parseFind(args []string) (Command, error) {
+	var words []string
+	owner := ""
+	help := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			words = append(words, args[i+1:]...)
+			i = len(args)
+		case arg == "--owner":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return Command{}, usagef("--owner requires a GitHub owner")
+			}
+			i++
+			owner = args[i]
+		case strings.HasPrefix(arg, "--owner="):
+			owner = strings.TrimPrefix(arg, "--owner=")
+		case arg == "-h" || arg == "--help":
+			help = true
+		case strings.HasPrefix(arg, "--"):
+			return Command{}, usagef("unknown option '%s'", arg)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			return Command{}, usagef("unknown option '%s'", arg)
+		default:
+			words = append(words, arg)
+		}
+	}
+	if help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if owner != "" || hasOwnerFlag(args) {
+		owner = normalizeOwner(owner)
+		if !ownerPattern.MatchString(owner) {
+			if owner == "" {
+				return Command{}, usagef("--owner requires a GitHub owner")
+			}
+			return Command{}, usagef("--owner must be a valid GitHub owner")
+		}
+	}
+	return Command{Kind: KindFind, Find: FindOptions{
+		Query: strings.Join(words, " "),
+		Owner: owner,
+	}}, nil
+}
+
+// hasOwnerFlag reports whether --owner appeared at all, so an explicitly empty value is a missing
+// value rather than no filter.
+func hasOwnerFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--owner" || strings.HasPrefix(arg, "--owner=") {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeOwner trims and lowercases the owner filter.
+func normalizeOwner(owner string) string {
+	return strings.ToLower(strings.TrimSpace(owner))
 }
 
 // parseInit parses `init [name]`: one optional positional name, and the rejected extra positionals

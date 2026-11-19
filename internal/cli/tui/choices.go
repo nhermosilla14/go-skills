@@ -130,6 +130,7 @@ const (
 // confirm is the yes/no prompt of the final confirmation and of the Eve question.
 type confirm struct {
 	title  string
+	note   string // optional faint line under the question
 	step   app.StepID
 	cursor int // 0 yes, 1 no
 	width  int
@@ -139,6 +140,13 @@ type confirm struct {
 
 func newConfirm(theme theme, step app.StepID, title string) *confirm {
 	return &confirm{title: title, step: step, width: defaultWidth, theme: theme, keys: defaultKeys()}
+}
+
+// newConfirmNote builds a yes/no prompt with a faint note under the question.
+func newConfirmNote(theme theme, step app.StepID, title, note string) *confirm {
+	c := newConfirm(theme, step, title)
+	c.note = note
+	return c
 }
 
 func (c *confirm) update(msg tea.Msg) (stepResult, tea.Cmd) {
@@ -194,10 +202,51 @@ func (c *confirm) apply(a *app.Answers) {
 	}
 }
 
+// offerPrompt runs the one-time find-skills question as its own program, because the add flow's
+// session has already finished by the time it is asked.
+type offerPrompt struct {
+	confirm   *confirm
+	accepted  bool
+	done      bool
+	cancelled bool
+}
+
+func newOfferPrompt(theme theme) *offerPrompt {
+	return &offerPrompt{
+		confirm: newConfirmNote(theme, app.StepFindSkillsOffer, findSkillsQuestion, findSkillsNote),
+	}
+}
+
+func (o *offerPrompt) Init() tea.Cmd { return nil }
+
+func (o *offerPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		o.confirm.resize(size.Width, size.Height)
+		return o, nil
+	}
+	result, cmd := o.confirm.update(msg)
+	switch result {
+	case stepCancelled:
+		o.cancelled, o.done = true, true
+		return o, tea.Quit
+	case stepFinished:
+		o.accepted, o.done = o.confirm.cursor == 0, true
+		return o, tea.Quit
+	}
+	return o, cmd
+}
+
+func (o *offerPrompt) View() string { return o.confirm.view() }
+
 func (c *confirm) view() string {
 	var lines []string
 	for _, line := range c.theme.wrap(c.title, c.width, 3) {
 		lines = append(lines, c.theme.bold(line))
+	}
+	if c.note != "" {
+		for _, line := range c.theme.wrap(c.note, c.width, 3) {
+			lines = append(lines, c.theme.faint(line))
+		}
 	}
 	lines = append(lines, c.theme.faint(c.theme.rule(c.width)))
 	for i, label := range []string{"Yes", "No"} {

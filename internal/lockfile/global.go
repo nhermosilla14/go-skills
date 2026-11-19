@@ -159,6 +159,25 @@ func (f *GlobalFile) SetLastSelectedAgents(ids []string) {
 	f.LastSelectedAgents = ids
 }
 
+// DismissedPrompt reports whether the named one-time prompt is recorded as dismissed. Only a JSON
+// true counts; any other stored value leaves the prompt enabled.
+func (f *GlobalFile) DismissedPrompt(name string) bool {
+	raw, ok := f.Dismissed[name]
+	if !ok {
+		return false
+	}
+	var dismissed bool
+	return json.Unmarshal(raw, &dismissed) == nil && dismissed
+}
+
+// DismissPrompt records the dismissal of the named one-time prompt.
+func (f *GlobalFile) DismissPrompt(name string) {
+	if f.Dismissed == nil {
+		f.Dismissed = map[string]json.RawMessage{}
+	}
+	f.Dismissed[name] = json.RawMessage("true")
+}
+
 // UnmarshalJSON reads an entry and keeps the fields it does not know.
 func (e *GlobalEntry) UnmarshalJSON(data []byte) error {
 	type plain GlobalEntry

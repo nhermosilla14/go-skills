@@ -104,7 +104,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | `update` | Re-resolve tracked skills to newer revisions, preserving mode and rename. | Project and global |
 | `check` | Report whether tracked skills are outdated without changing anything. | Project and global |
 | `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | Delivered |
-| `find` | Search skill catalogs. | `TODO` |
+| `find` | Search the skills.sh directory by keyword or interactively. | Delivered |
 | `init` | Create a new `SKILL.md` skeleton. | Delivered |
 | `install` | With a source, same as `add`; without one, restore project skills from `skills-lock.json` at their pinned commits. | Project restore |
 | `experimental_install` | Alias of restore from the lock file. | Project restore |

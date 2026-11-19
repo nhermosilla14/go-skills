@@ -67,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runUse(cmd, stdout, stderr)
 	case cli.KindInit:
 		return runInit(cmd.Init, stderr)
+	case cli.KindFind:
+		return runFind(cmd.Find, stdout, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -118,6 +120,7 @@ func runAdd(opts app.AddOptions, stdout, stderr io.Writer) (code int) {
 		return exitOK
 	}
 	cli.WriteReport(stderr, rep)
+	cli.WriteFindOffer(stderr, rep.Offer)
 	if opts.JSON {
 		document = cli.JSONEntries(rep)
 		if rep.Failed() || cli.HasSkipped(document) {

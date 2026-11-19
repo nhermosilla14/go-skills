@@ -62,6 +62,7 @@ type Report struct {
 	Ref      string            // git ref, empty for local sources
 	Scope    string            // project or global
 	Hashes   map[string]string // installed name → content hash, for --json
+	Offer    *OfferReport      // the one-time find-skills question, when it was asked
 }
 
 // Failed reports whether any skill failed for any agent.
@@ -202,6 +203,9 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 			rep.Warnings = append(rep.Warnings,
 				"could not record the agent selection in the global lock: "+err.Error())
 		}
+	}
+	if offer, ok := offerWanted(opts, prompter, rep); ok {
+		rep.Offer = offerFindSkills(env, agentEnv, agentIDs(selected), offer)
 	}
 	return rep, nil
 }

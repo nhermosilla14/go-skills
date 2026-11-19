@@ -1,5 +1,7 @@
 # Find skills
 
+- Status: Done
+
 - Intents: 20261119-find-skills
 - ADRs: 20261119-skills-sh-search
 

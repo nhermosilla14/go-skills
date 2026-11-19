@@ -21,6 +21,8 @@ Commands:
   experimental_install
                     Restore skills from skills-lock.json
   list, ls          List installed skills and their lock status
+  find, f, s, search
+                    Search skills.sh for skills, or prompt interactively
   check [skill...]  Report available updates and local changes, without writing
   update, upgrade   Update installed skills to their latest content
   remove, rm, r     Remove installed skills
@@ -92,6 +94,11 @@ Check options:
   -g, --global             Check the global scope
   -h, --help               Show this help
 
+Find options:
+  find [query...]          Search for skills; without a query, prompt interactively
+      --owner <owner>      Only skills from this GitHub owner
+  -h, --help               Show this help
+
 Update options:
   update [skill...]        Update every tracked skill, or only the named ones
   -p, --project            Update the project scope without asking
@@ -109,8 +116,8 @@ Remove options:
       --all                Remove every lock-tracked skill for every agent, without prompting
   -h, --help               Show this help
 
-Output: progress, prompts and results go to stderr; --json, --list, list and check
-reports go to stdout.
+Output: progress, prompts and results go to stderr; --json, --list, list, check and
+find reports go to stdout.
 Exit codes: 0 success, 1 failure, no match or a check finding, 2 usage error.
 `, strings.Join(agents.IDs(), ", "))
 }
