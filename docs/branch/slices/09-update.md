@@ -1,5 +1,7 @@
 # Update
 
+- Status: Done
+
 - Intents: 20261119-skill-management-and-scopes
 - ADRs: 20261119-install-plan-and-filesystem-model, 20261119-source-acquisition-clone-first
 

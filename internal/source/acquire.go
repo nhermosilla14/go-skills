@@ -273,7 +273,7 @@ func cloneError(url string, attempts []string, out Output, err error) error {
 		return fmt.Errorf("failed to clone %s after trying %s: %s", url, strings.Join(attempts, ", "), text)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to clone %s after trying %s: %s", url, strings.Join(attempts, ", "), redact(err.Error()))
+		return fmt.Errorf("failed to clone %s after trying %s: %s", url, strings.Join(attempts, ", "), RedactCredentials(err.Error()))
 	}
 	return fmt.Errorf("failed to clone %s after trying %s", url, strings.Join(attempts, ", "))
 }
@@ -305,13 +305,15 @@ func authFailure(out Output) bool {
 // credentialsRE matches the userinfo of a URL so error text cannot echo it.
 var credentialsRE = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@`)
 
-func redact(s string) string {
+// RedactCredentials removes the userinfo of every URL in s, so a source read from a lock file can
+// never print a password. It is exported for the callers that render recorded sources.
+func RedactCredentials(s string) string {
 	return credentialsRE.ReplaceAllString(s, "${1}***@")
 }
 
 // detail renders a command result for an error message.
 func detail(out Output) string {
-	text := strings.TrimSpace(redact(strings.TrimSpace(out.Stdout + "\n" + out.Stderr)))
+	text := strings.TrimSpace(RedactCredentials(strings.TrimSpace(out.Stdout + "\n" + out.Stderr)))
 	if runes := []rune(text); len(runes) > 800 {
 		text = string(runes[:800]) + "…"
 	}

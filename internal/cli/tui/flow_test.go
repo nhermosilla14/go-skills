@@ -197,6 +197,31 @@ func TestFlowEveDeclinedKeepsAgentPicker(t *testing.T) {
 	}
 }
 
+func TestFlowUpdateScopeAnswers(t *testing.T) {
+	for cursor, want := range map[int]app.Scope{
+		0: app.ScopeProject,
+		1: app.ScopeGlobal,
+		2: app.ScopeBoth,
+	} {
+		q := app.Questions{
+			Steps:    []app.StepID{app.StepUpdateScope},
+			Defaults: app.Answers{Scope: app.ScopeProject},
+		}
+		f := newFlow(q, newTheme(io.Discard, false, true))
+		f.resize(80, 24)
+		for i := 0; i < cursor; i++ {
+			send(t, f, down())
+		}
+		send(t, f, enter())
+		if !f.done {
+			t.Fatalf("cursor %d: flow did not finish", cursor)
+		}
+		if f.answers.Scope != want {
+			t.Errorf("cursor %d: scope = %q, want %q", cursor, f.answers.Scope, want)
+		}
+	}
+}
+
 func TestFlowResizeKeepsState(t *testing.T) {
 	f := newTestFlow(t)
 	send(t, f, runeKey('a'))

@@ -15,6 +15,7 @@ Commands:
   add <source>      Install the skills found in a source
   list, ls          List installed project skills and their lock status
   check [skill...]  Report available updates and local changes, without writing
+  update, upgrade   Update installed project skills to their latest content
   remove, rm, r     Remove installed project skills
   help              Show this help
   version           Show version, commit and build date
@@ -58,6 +59,12 @@ List options:
 
 Check options:
   check [skill...]         Limit the check to the named skills
+  -h, --help               Show this help
+
+Update options:
+  update [skill...]        Update every tracked skill, or only the named ones
+  -p, --project            Update the project scope without asking
+  -y, --yes                Update without prompting
   -h, --help               Show this help
 
 Remove options:

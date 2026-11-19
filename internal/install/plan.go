@@ -50,17 +50,21 @@ type PlanOptions struct {
 	ForceCopy bool               // --copy
 	Global    bool               // global scope; its lock and CLI wiring arrive later
 	Rename    string             // --rename value
+	Mode      Mode               // force symlink or copy; empty derives it from the agents
 }
 
 // Plan decides, without touching the disk, where each skill goes. Copy mode is used when ForceCopy
 // is set, when the selected agents share at most one project skills directory, or when every
-// target is Eve. A non-empty rename installs every skill under that name, which the caller
-// restricts to one skill. Entries are sorted by installed name.
+// target is Eve, unless Mode forces a mode. A non-empty rename installs every skill under that
+// name, which the caller restricts to one skill. Entries are sorted by installed name.
 func Plan(projectDir string, skills []skill.Skill, selected []agents.Agent, opts PlanOptions) []Entry {
 	env := opts.Env
 	env.Cwd = projectDir
 	derivedCopy := derivedCopyMode(selected)
 	mode := ResolveMode(selected, opts.ForceCopy)
+	if opts.Mode != "" {
+		mode = opts.Mode
+	}
 	entries := make([]Entry, 0, len(skills))
 	for _, s := range skills {
 		name := skill.SanitizeName(s.Name)

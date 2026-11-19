@@ -59,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCheck(cmd.Check, stdout, stderr)
 	case cli.KindRemove:
 		return runRemove(cmd.Remove, stderr)
+	case cli.KindUpdate:
+		return runUpdate(cmd.Update, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -176,6 +178,34 @@ func runCheck(opts app.CheckOptions, stdout, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	cli.WriteCheck(stdout, rep)
+	if rep.Failed() {
+		return exitFailure
+	}
+	return exitOK
+}
+
+// runUpdate runs `update`, whose progress and result summary go to the human stream.
+func runUpdate(opts app.UpdateOptions, stderr io.Writer) int {
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	prompter := app.Prompter(app.NoPrompts{})
+	if env.IsTTY {
+		prompter = tui.New(os.Stdin, stderr, tui.Options{Color: colorEnabled(), ASCII: !utf8Locale()})
+	}
+	rep, err := app.Update(opts, env, prompter)
+	if err != nil {
+		if errors.Is(err, app.ErrCancelled) {
+			fmt.Fprintln(stderr, "Cancelled")
+			if env.IsTTY {
+				return exitOK
+			}
+			return exitFailure
+		}
+		return reportError(stderr, err)
+	}
+	cli.WriteUpdate(stderr, rep)
 	if rep.Failed() {
 		return exitFailure
 	}

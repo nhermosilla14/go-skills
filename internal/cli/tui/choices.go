@@ -76,6 +76,15 @@ func (c *choice) apply(a *app.Answers) {
 			return
 		}
 		a.Scope = app.ScopeProject
+	case app.StepUpdateScope:
+		switch c.cursor {
+		case 1:
+			a.Scope = app.ScopeGlobal
+		case 2:
+			a.Scope = app.ScopeBoth
+		default:
+			a.Scope = app.ScopeProject
+		}
 	case app.StepMethod:
 		if c.cursor == 1 {
 			a.Mode = install.ModeCopy

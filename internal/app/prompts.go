@@ -23,6 +23,8 @@ const (
 	ScopeProject Scope = "project"
 	// ScopeGlobal installs into the user's home directory. Not implemented yet.
 	ScopeGlobal Scope = "global"
+	// ScopeBoth updates both scopes. Not implemented yet.
+	ScopeBoth Scope = "both"
 )
 
 // StepID names one prompt of the add flow. The values are stable because the flow is compiled
@@ -38,6 +40,8 @@ const (
 	StepAgents StepID = "agents"
 	// StepScope selects the installation scope.
 	StepScope StepID = "scope"
+	// StepUpdateScope selects the update scope: project, global or both.
+	StepUpdateScope StepID = "update-scope"
 	// StepMethod selects symlink or copy.
 	StepMethod StepID = "method"
 	// StepConfirm is the final yes/no.

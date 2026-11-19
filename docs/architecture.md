@@ -35,7 +35,7 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 |---|---|---|
 | `cmd/skills` | Entry point: dispatch, user-facing errors, exit codes, build metadata. | delivered |
 | `internal/cli` | Argument parser, help, JSON document, human rendering; `internal/cli/tui` holds the Bubble Tea flow. | delivered |
-| `internal/app` | Use cases (`Add`, `List`, `Check`, `Remove`), prompt questions and the `Prompter` seam; no command syntax. | partial |
+| `internal/app` | Use cases (`Add`, `List`, `Check`, `Remove`, `Update`), prompt questions and the `Prompter` seam; no command syntax. | partial |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
 | `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
 | `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |

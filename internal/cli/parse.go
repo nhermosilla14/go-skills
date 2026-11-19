@@ -16,6 +16,7 @@ const (
 	KindList
 	KindCheck
 	KindRemove
+	KindUpdate
 )
 
 // Command is a parsed command line.
@@ -25,6 +26,7 @@ type Command struct {
 	List   app.ListOptions   // set when Kind is KindList
 	Check  app.CheckOptions  // set when Kind is KindCheck
 	Remove app.RemoveOptions // set when Kind is KindRemove
+	Update app.UpdateOptions // set when Kind is KindUpdate
 	JSON   bool              // --json, for list
 }
 
@@ -49,6 +51,8 @@ func Parse(args []string) (Command, error) {
 		return parseList(args[1:])
 	case name == "check":
 		return parseCheck(args[1:])
+	case name == "update" || name == "upgrade":
+		return parseUpdate(args[1:])
 	case name == "remove" || name == "rm" || name == "r":
 		return parseRemove(args[1:])
 	case strings.HasPrefix(name, "-"):
@@ -398,6 +402,74 @@ func parseCheck(args []string) (Command, error) {
 		return Command{}, usagef("global scope is not supported yet")
 	}
 	return Command{Kind: KindCheck, Check: p.opts}, nil
+}
+
+// updateParser accumulates the options of update.
+type updateParser struct {
+	opts   app.UpdateOptions
+	global bool
+	help   bool
+}
+
+// parseUpdate parses `update` / `upgrade`: positional skill names, -p and -y, and the rejected
+// -g until global scope arrives.
+func parseUpdate(args []string) (Command, error) {
+	p := &updateParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			p.opts.Skills = append(p.opts.Skills, args[i+1:]...)
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			name, _, hasValue := strings.Cut(arg[2:], "=")
+			if name != "project" && name != "yes" && name != "global" && name != "help" {
+				return Command{}, usagef("unknown option '--%s'", name)
+			}
+			if hasValue {
+				return Command{}, usagef("--%s does not take a value", name)
+			}
+			p.boolean(name)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			group, _, hasValue := strings.Cut(arg[1:], "=")
+			for k := 0; k < len(group); k++ {
+				letter := group[k]
+				name, ok := updateShortNames[letter]
+				if !ok {
+					return Command{}, usagef("unknown option '-%c'", letter)
+				}
+				if hasValue && k == len(group)-1 {
+					return Command{}, usagef("-%c does not take a value", letter)
+				}
+				p.boolean(name)
+			}
+		default:
+			p.opts.Skills = append(p.opts.Skills, arg)
+		}
+	}
+	if p.help {
+		return Command{Kind: KindHelp}, nil
+	}
+	if p.global {
+		return Command{}, usagef("global scope is not supported yet")
+	}
+	return Command{Kind: KindUpdate, Update: p.opts}, nil
+}
+
+// updateShortNames maps the single-letter switches of update to their long names.
+var updateShortNames = map[byte]string{'p': "project", 'y': "yes", 'g': "global", 'h': "help"}
+
+func (p *updateParser) boolean(name string) {
+	switch name {
+	case "project":
+		p.opts.Project = true
+	case "yes":
+		p.opts.Yes = true
+	case "global":
+		p.global = true
+	case "help":
+		p.help = true
+	}
 }
 
 // removeParser accumulates the options of remove.

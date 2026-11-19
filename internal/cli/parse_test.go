@@ -334,12 +334,99 @@ func TestParseRemoveUsageErrors(t *testing.T) {
 	}
 }
 
+func TestParseUpdateOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want app.UpdateOptions
+	}{
+		{
+			name: "positional names",
+			args: []string{"update", "alpha", "Beta"},
+			want: app.UpdateOptions{Skills: []string{"alpha", "Beta"}},
+		},
+		{
+			name: "alias with project and yes",
+			args: []string{"upgrade", "alpha", "-p", "-y"},
+			want: app.UpdateOptions{Skills: []string{"alpha"}, Project: true, Yes: true},
+		},
+		{
+			name: "grouped short flags",
+			args: []string{"update", "-py"},
+			want: app.UpdateOptions{Project: true, Yes: true},
+		},
+		{
+			name: "long flags",
+			args: []string{"update", "--project", "--yes", "alpha"},
+			want: app.UpdateOptions{Skills: []string{"alpha"}, Project: true, Yes: true},
+		},
+		{
+			name: "double dash keeps an option-like name",
+			args: []string{"update", "--", "-weird"},
+			want: app.UpdateOptions{Skills: []string{"-weird"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := Parse(tc.args)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cmd.Kind != KindUpdate {
+				t.Fatalf("Kind = %v, want KindUpdate", cmd.Kind)
+			}
+			if !reflect.DeepEqual(cmd.Update, tc.want) {
+				t.Errorf("Update = %+v, want %+v", cmd.Update, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseUpdateUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"global", []string{"update", "-g"}, "global scope is not supported yet"},
+		{"long global", []string{"update", "--global"}, "global scope is not supported yet"},
+		{"unknown flag", []string{"update", "--force"}, "unknown option '--force'"},
+		{"unknown short", []string{"update", "-q"}, "unknown option '-q'"},
+		{"boolean with value", []string{"update", "--project=1"}, "--project does not take a value"},
+		{"short value", []string{"update", "-y=1"}, "-y does not take a value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.args)
+			var usage *UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("err = %v, want UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %q, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseUpdateHelp(t *testing.T) {
+	for _, args := range [][]string{{"update", "-h"}, {"upgrade", "--help"}} {
+		cmd, err := Parse(args)
+		if err != nil {
+			t.Fatalf("Parse %v: %v", args, err)
+		}
+		if cmd.Kind != KindHelp {
+			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		}
+	}
+}
+
 func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 	help := Help()
 	for _, want := range []string{
 		"claude-code", "opencode", "--copy", "--list", "--json", "--subagent",
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
-		"remove, rm, r", "--all",
+		"remove, rm, r", "--all", "update, upgrade", "--project",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

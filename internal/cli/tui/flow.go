@@ -124,6 +124,12 @@ func (f *flow) newStep(step app.StepID) stepModel {
 			{label: "Project", detail: "Install in current directory (committed with your project)"},
 			{label: "Global", detail: "Install in home directory (available across all projects)"},
 		})
+	case app.StepUpdateScope:
+		return newChoice(f.theme, step, "Update scope", []option{
+			{label: "Project", detail: "Update skills installed in this project"},
+			{label: "Global", detail: "Not supported yet"},
+			{label: "Both", detail: "Not supported yet"},
+		})
 	case app.StepMethod:
 		return newChoice(f.theme, step, "Installation method", []option{
 			{label: symlinkLabel, detail: "Single source of truth, easy updates"},
