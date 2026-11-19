@@ -68,14 +68,16 @@ func Parse(args []string) (Command, error) {
 
 // addParser accumulates the options of add while the arguments are read.
 type addParser struct {
-	opts    app.AddOptions
-	help    bool
-	global  bool
-	all     bool
-	restore bool   // install or i: no source means restore
-	force   bool   // --force, restore only
-	dryRun  bool   // --dry-run, restore only
-	addOnly string // the first add-only option that cannot apply to a restore
+	opts     app.AddOptions
+	help     bool
+	global   bool
+	all      bool
+	restore  bool   // install or i: no source means restore
+	force    bool   // --force, restore only
+	dryRun   bool   // --dry-run, restore only
+	frozen   bool   // --frozen-lockfile, restore only
+	noFrozen bool   // --no-frozen-lockfile, restore only
+	addOnly  string // the first add-only option that cannot apply to a restore
 }
 
 // shortNames maps the single-letter switches of add to their long names.
@@ -123,6 +125,7 @@ func parseAdd(name string, args []string) (Command, error) {
 		}
 		return Command{Kind: KindRestore, Restore: app.RestoreOptions{
 			Agents: p.opts.Agents, Force: p.force, DryRun: p.dryRun,
+			Frozen: resolveFrozen(p.frozen, p.noFrozen),
 		}}, nil
 	}
 	if p.force {
@@ -131,7 +134,33 @@ func parseAdd(name string, args []string) (Command, error) {
 	if p.dryRun {
 		return Command{}, usagef("--dry-run only applies when restoring from skills-lock.json")
 	}
+	if flag := frozenFlagName(p.frozen, p.noFrozen); flag != "" {
+		return Command{}, usagef("%s only applies when restoring from skills-lock.json", flag)
+	}
 	return Command{Kind: KindAdd, Add: p.opts}, nil
+}
+
+// resolveFrozen maps the two flags to the mode: --frozen-lockfile wins over --no-frozen-lockfile,
+// and neither flag follows the environment.
+func resolveFrozen(frozen, noFrozen bool) app.FrozenMode {
+	if frozen {
+		return app.FrozenEnabled
+	}
+	if noFrozen {
+		return app.FrozenDisabled
+	}
+	return app.FrozenFromEnvironment
+}
+
+// frozenFlagName names the frozen option on the command line, or "" when neither was given.
+func frozenFlagName(frozen, noFrozen bool) string {
+	if frozen {
+		return "--frozen-lockfile"
+	}
+	if noFrozen {
+		return "--no-frozen-lockfile"
+	}
+	return ""
 }
 
 // restoreError rejects the options that cannot apply to a restore from the lock.
@@ -161,17 +190,22 @@ func (p *addParser) long(args []string, i int) (int, error) {
 		return p.repeatable(args, i, name, value, hasValue)
 	case "rename":
 		return p.value(args, i, name, value, hasValue)
-	case "force", "dry-run":
+	case "force", "dry-run", "frozen-lockfile", "no-frozen-lockfile":
 		if !p.restore {
 			return i, usagef("unknown option '--%s'", name)
 		}
 		if hasValue {
 			return i, usagef("--%s does not take a value", name)
 		}
-		if name == "force" {
+		switch name {
+		case "force":
 			p.force = true
-		} else {
+		case "dry-run":
 			p.dryRun = true
+		case "frozen-lockfile":
+			p.frozen = true
+		default:
+			p.noFrozen = true
 		}
 		return i, nil
 	case "copy", "yes", "list", "global", "help", "all", "full-depth", "json":
@@ -301,8 +335,10 @@ func (p *addParser) markAddOnly(option string) {
 
 // restoreParser accumulates the options of experimental_install.
 type restoreParser struct {
-	opts app.RestoreOptions
-	help bool
+	opts     app.RestoreOptions
+	help     bool
+	frozen   bool // --frozen-lockfile
+	noFrozen bool // --no-frozen-lockfile
 }
 
 // parseRestore parses `experimental_install`, which always restores: it takes no source, and -g is
@@ -332,6 +368,7 @@ func parseRestore(args []string) (Command, error) {
 	if p.help {
 		return Command{Kind: KindHelp}, nil
 	}
+	p.opts.Frozen = resolveFrozen(p.frozen, p.noFrozen)
 	return Command{Kind: KindRestore, Restore: p.opts}, nil
 }
 
@@ -340,7 +377,7 @@ func (p *restoreParser) long(args []string, i int) (int, error) {
 	switch name {
 	case "agent":
 		return p.agent(args, i, value, hasValue)
-	case "force", "dry-run", "help":
+	case "force", "dry-run", "frozen-lockfile", "no-frozen-lockfile", "help":
 		if hasValue {
 			return i, usagef("--%s does not take a value", name)
 		}
@@ -349,6 +386,10 @@ func (p *restoreParser) long(args []string, i int) (int, error) {
 			p.opts.Force = true
 		case "dry-run":
 			p.opts.DryRun = true
+		case "frozen-lockfile":
+			p.frozen = true
+		case "no-frozen-lockfile":
+			p.noFrozen = true
 		case "help":
 			p.help = true
 		}

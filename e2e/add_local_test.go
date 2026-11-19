@@ -71,14 +71,14 @@ func run(t *testing.T, dir string, args ...string) result {
 	return runEnv(t, dir, nil, args...)
 }
 
-// runEnv runs the binary with extra environment entries appended to the process environment.
+// runEnv runs the binary with extra environment entries appended to the process environment. The CI
+// variables are dropped first, so no test reads the CI of the machine it runs on; a test that wants
+// frozen mode passes CI=1 in extraEnv.
 func runEnv(t *testing.T, dir string, extraEnv []string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(skillsBin, args...)
 	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = append(withoutCI(os.Environ()), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -90,6 +90,24 @@ func runEnv(t *testing.T, dir string, extraEnv []string, args ...string) result 
 		t.Fatalf("run %v: %v", args, err)
 	}
 	return result{stdout: stdout.String(), stderr: stderr.String(), exit: exit}
+}
+
+// ciVariables are the variables that make a restore frozen by default.
+var ciVariables = map[string]bool{
+	"CI": true, "GITHUB_ACTIONS": true, "GITLAB_CI": true, "BUILDKITE": true,
+	"CIRCLECI": true, "TRAVIS": true, "TF_BUILD": true, "JENKINS_URL": true,
+}
+
+// withoutCI drops the CI variables from an environment.
+func withoutCI(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if key, _, _ := splitEnv(kv); ciVariables[key] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // lockDoc is the subset of skills-lock.json the test asserts on.

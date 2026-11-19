@@ -50,6 +50,13 @@ func TestParseRestore(t *testing.T) {
 			app.RestoreOptions{Agents: []string{"*"}, Force: true}},
 		{"experimental install short agent", []string{"experimental_install", "-a", "opencode"},
 			app.RestoreOptions{Agents: []string{"opencode"}}},
+		{"install frozen", []string{"install", "--frozen-lockfile"},
+			app.RestoreOptions{Frozen: app.FrozenEnabled}},
+		{"experimental install no frozen", []string{"experimental_install", "--no-frozen-lockfile"},
+			app.RestoreOptions{Frozen: app.FrozenDisabled}},
+		{"frozen wins over no frozen",
+			[]string{"install", "--no-frozen-lockfile", "--frozen-lockfile"},
+			app.RestoreOptions{Frozen: app.FrozenEnabled}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,6 +198,13 @@ func TestParseUsageErrors(t *testing.T) {
 		{"experimental install source", []string{"experimental_install", "./x"}, "unexpected argument './x'"},
 		{"install force with source", []string{"install", "./x", "--force"}, "--force only applies when restoring"},
 		{"install dry-run with source", []string{"install", "./x", "--dry-run"}, "--dry-run only applies when restoring"},
+		{"install frozen with source", []string{"install", "./x", "--frozen-lockfile"},
+			"--frozen-lockfile only applies when restoring"},
+		{"install no-frozen with source", []string{"install", "./x", "--no-frozen-lockfile"},
+			"--no-frozen-lockfile only applies when restoring"},
+		{"add frozen", []string{"add", "./x", "--frozen-lockfile"}, "unknown option '--frozen-lockfile'"},
+		{"experimental install frozen with value", []string{"experimental_install", "--frozen-lockfile=1"},
+			"--frozen-lockfile does not take a value"},
 		{"list flag without value", []string{"add", "./x", "--agent", "-y"}, "--agent requires an agent name"},
 		{"skill equals empty", []string{"add", "./x", "--skill="}, "--skill requires a skill name"},
 		{"boolean with value", []string{"add", "./x", "--copy=1"}, "--copy does not take a value"},
@@ -491,6 +505,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 		"owner/repo@v1.2.3", "git@github.com:owner/repo.git", "git on PATH",
 		"remove, rm, r", "--all", "update, upgrade", "--project",
 		"experimental_install", "Restore options:", "--dry-run",
+		"--frozen-lockfile", "--no-frozen-lockfile", "JENKINS_URL",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

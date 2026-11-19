@@ -16,7 +16,7 @@ type Environment struct {
 	GOOS string            // target platform: linux, darwin or windows
 	Home string            // user home directory
 	Cwd  string            // project directory
-	Vars map[string]string // environment variables read by the registry
+	Vars map[string]string // environment variables read by the registry and by the CI checks
 
 	// ApplicationsDir and EtcDir are the roots of the fixed probes outside home, so tests can
 	// exercise them without touching the real system. Empty means the platform default.
@@ -24,13 +24,15 @@ type Environment struct {
 	EtcDir          string
 }
 
-// FromOS reads the current process environment. Vars holds only the variables the registry reads.
+// FromOS reads the current process environment. Vars holds only the variables the registry and the
+// CI checks read.
 func FromOS(cwd string) Environment {
 	vars := map[string]string{}
 	for _, name := range []string{
 		"XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPDATA", "FLATPAK_XDG_CONFIG_HOME", "HOME", "USERPROFILE",
 		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "HERMES_HOME", "AUTOHAND_HOME",
 		"GROK_HOME", "SARVAM_HOME", "REASONIX_HOME",
+		"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TRAVIS", "TF_BUILD", "JENKINS_URL",
 	} {
 		if v, ok := os.LookupEnv(name); ok {
 			vars[name] = v

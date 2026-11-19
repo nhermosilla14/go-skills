@@ -196,6 +196,13 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if saved {
 		rep.LockPath = lockPath
 	}
+	if !global && len(selected) > 0 {
+		// Restore falls back to this selection when -a is absent.
+		if err := recordAgentSelection(agentEnv, agentIDs(selected)); err != nil {
+			rep.Warnings = append(rep.Warnings,
+				"could not record the agent selection in the global lock: "+err.Error())
+		}
+	}
 	return rep, nil
 }
 

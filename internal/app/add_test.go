@@ -41,9 +41,21 @@ func testEnv(project string) Env {
 	}
 }
 
+// addEnv is testEnv with an isolated home, so recording the agent selection of a project add can
+// never write the global lock of the machine running the tests.
+func addEnv(t *testing.T, project string) Env {
+	t.Helper()
+	env := testEnv(project)
+	env.AgentEnv = agents.Environment{
+		GOOS: "linux", Home: t.TempDir(), Cwd: project, Vars: map[string]string{},
+		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
+	}
+	return env
+}
+
 func TestAddListInstallsNothing(t *testing.T) {
 	project := t.TempDir()
-	rep, err := Add(AddOptions{Source: newSource(t), List: true}, testEnv(project))
+	rep, err := Add(AddOptions{Source: newSource(t), List: true}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -59,14 +71,14 @@ func TestAddListInstallsNothing(t *testing.T) {
 }
 
 func TestAddRequiresYes(t *testing.T) {
-	_, err := Add(AddOptions{Source: newSource(t), Agents: []string{"opencode"}}, testEnv(t.TempDir()))
+	_, err := Add(AddOptions{Source: newSource(t), Agents: []string{"opencode"}}, addEnv(t, t.TempDir()))
 	if !errors.Is(err, ErrPromptRequired) {
 		t.Fatalf("err = %v, want ErrPromptRequired", err)
 	}
 }
 
 func TestAddRejectsInvalidAgent(t *testing.T) {
-	_, err := Add(AddOptions{Source: newSource(t), Agents: []string{"claude_code"}, Yes: true}, testEnv(t.TempDir()))
+	_, err := Add(AddOptions{Source: newSource(t), Agents: []string{"claude_code"}, Yes: true}, addEnv(t, t.TempDir()))
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("err = %v, want ErrUsage", err)
 	}
@@ -75,7 +87,7 @@ func TestAddRejectsInvalidAgent(t *testing.T) {
 func TestAddInstallsAndRecords(t *testing.T) {
 	project := t.TempDir()
 	src := newSource(t)
-	rep, err := Add(AddOptions{Source: src, Agents: []string{"opencode", "claude-code"}, Yes: true}, testEnv(project))
+	rep, err := Add(AddOptions{Source: src, Agents: []string{"opencode", "claude-code"}, Yes: true}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -113,7 +125,7 @@ func TestAddDetectsAgentsWhenNoneIsNamed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := testEnv(project)
+	env := addEnv(t, project)
 	env.AgentEnv = agents.Environment{
 		GOOS: "linux", Home: home, Cwd: project, Vars: map[string]string{},
 		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
@@ -137,13 +149,42 @@ func TestAddDetectsAgentsWhenNoneIsNamed(t *testing.T) {
 	}
 }
 
+// TestProjectAddRecordsTheDetectedSelection covers the parity fix: restore falls back to the last
+// selection, so a project add must record the selection it made without -a.
+func TestProjectAddRecordsTheDetectedSelection(t *testing.T) {
+	project := t.TempDir()
+	env := addEnv(t, project)
+	if err := os.MkdirAll(filepath.Join(env.AgentEnv.Home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(AddOptions{Source: newSource(t), Yes: true}, env); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	lock, err := lockfile.LoadGlobal(agents.GlobalLockPath(env.AgentEnv))
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	found := false
+	for _, id := range lock.LastSelectedAgents {
+		if id == "cursor" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("lastSelectedAgents = %v, want the detected cursor", lock.LastSelectedAgents)
+	}
+	if len(lock.Skills) != 0 {
+		t.Errorf("the global lock tracks %v, want only the selection", lock.Skills)
+	}
+}
+
 func TestAddExplicitAgentsBypassDetection(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := testEnv(project)
+	env := addEnv(t, project)
 	env.AgentEnv = agents.Environment{
 		GOOS: "linux", Home: home, Cwd: project, Vars: map[string]string{},
 		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
@@ -172,7 +213,7 @@ func TestAddExplicitAgentsBypassDetection(t *testing.T) {
 
 func TestAddNothingDetectedInstallsEveryAgent(t *testing.T) {
 	project := t.TempDir()
-	env := testEnv(project)
+	env := addEnv(t, project)
 	env.AgentEnv = agents.Environment{
 		GOOS: "linux", Home: t.TempDir(), Cwd: project, Vars: map[string]string{},
 		ApplicationsDir: t.TempDir(), EtcDir: t.TempDir(),
@@ -218,7 +259,7 @@ func TestAddRecordsInstallModeOnlyWhenCopyIsForced(t *testing.T) {
 	src := newSource(t)
 
 	forced := t.TempDir()
-	if _, err := Add(AddOptions{Source: src, Agents: []string{"opencode", "claude-code"}, Yes: true, Copy: true}, testEnv(forced)); err != nil {
+	if _, err := Add(AddOptions{Source: src, Agents: []string{"opencode", "claude-code"}, Yes: true, Copy: true}, addEnv(t, forced)); err != nil {
 		t.Fatalf("Add --copy: %v", err)
 	}
 	lock, err := lockfile.Load(filepath.Join(forced, lockfile.FileName))
@@ -230,7 +271,7 @@ func TestAddRecordsInstallModeOnlyWhenCopyIsForced(t *testing.T) {
 	}
 
 	derived := t.TempDir()
-	if _, err := Add(AddOptions{Source: src, Agents: []string{"claude-code"}, Yes: true, Copy: true}, testEnv(derived)); err != nil {
+	if _, err := Add(AddOptions{Source: src, Agents: []string{"claude-code"}, Yes: true, Copy: true}, addEnv(t, derived)); err != nil {
 		t.Fatalf("Add copy by default: %v", err)
 	}
 	lock, err = lockfile.Load(filepath.Join(derived, lockfile.FileName))
@@ -253,7 +294,7 @@ func TestAddRenameRewritesInstalledName(t *testing.T) {
 	project := t.TempDir()
 	rep, err := Add(AddOptions{
 		Source: src, Agents: []string{"claude-code"}, Yes: true, Rename: "alpha-new",
-	}, testEnv(project))
+	}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -307,7 +348,7 @@ func TestAddRenameRestrictions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Add(AddOptions{
 				Source: tc.source, Agents: []string{"claude-code"}, Yes: true, Rename: tc.rename,
-			}, testEnv(t.TempDir()))
+			}, addEnv(t, t.TempDir()))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want containing %q", err, tc.want)
 			}
@@ -323,7 +364,7 @@ func TestAddSelectsByNormalizedName(t *testing.T) {
 	project := t.TempDir()
 	rep, err := Add(AddOptions{
 		Source: src, Agents: []string{"opencode"}, Skills: []string{"convex-best-practices"}, Yes: true,
-	}, testEnv(project))
+	}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -340,7 +381,7 @@ func TestAddRetriesDiscoveryWithFullDepthForAMissingSkill(t *testing.T) {
 	project := t.TempDir()
 	rep, err := Add(AddOptions{
 		Source: src, Agents: []string{"opencode"}, Skills: []string{"alpha"}, Yes: true,
-	}, testEnv(project))
+	}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}

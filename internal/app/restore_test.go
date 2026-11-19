@@ -1,10 +1,13 @@
 package app
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/hash"
@@ -467,6 +470,462 @@ func TestRestoreMissingOrEmptyLock(t *testing.T) {
 	_, err := Restore(RestoreOptions{}, updateTestEnv(t, project))
 	if err == nil || !strings.Contains(err.Error(), "No project skills found") {
 		t.Errorf("err = %v, want the empty-lock message", err)
+	}
+}
+
+// frozenEnv is a project environment that looks like CI: any restore runs frozen by default.
+func frozenEnv(t *testing.T, project string) Env {
+	t.Helper()
+	env := updateTestEnv(t, project)
+	env.AgentEnv.Vars["CI"] = "1"
+	return env
+}
+
+// frozenSnapshot records the project tree, the lock bytes and the lock modification time, so a
+// failing frozen run can prove it changed nothing.
+type frozenSnapshot struct {
+	tree    map[string]string
+	lock    string
+	lockMod time.Time
+	hasLock bool
+}
+
+func snapshotFrozen(t *testing.T, project string) frozenSnapshot {
+	t.Helper()
+	snap := frozenSnapshot{tree: map[string]string{}}
+	err := filepath.WalkDir(project, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(project, p)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			snap.tree[rel] = "link:" + target
+		case d.IsDir():
+			snap.tree[rel] = "dir"
+		default:
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			snap.tree[rel] = "file:" + string(data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshotting %s: %v", project, err)
+	}
+	lockPath := filepath.Join(project, lockfile.FileName)
+	if info, err := os.Stat(lockPath); err == nil {
+		snap.hasLock = true
+		snap.lockMod = info.ModTime()
+		snap.lock = readFile(t, lockPath)
+	}
+	return snap
+}
+
+// assertUnchanged fails when project no longer matches the snapshot, lock bytes and mtime included.
+func (s frozenSnapshot) assertUnchanged(t *testing.T, project string) {
+	t.Helper()
+	after := snapshotFrozen(t, project)
+	if !reflect.DeepEqual(after.tree, s.tree) {
+		t.Errorf("tree changed:\n got %v\nwant %v", after.tree, s.tree)
+	}
+	if after.hasLock != s.hasLock || after.lock != s.lock {
+		t.Errorf("lock changed:\n got %q\nwant %q", after.lock, s.lock)
+	}
+	if !after.lockMod.Equal(s.lockMod) {
+		t.Errorf("lock mtime = %v, want %v", after.lockMod, s.lockMod)
+	}
+}
+
+func TestFrozenRestoreEnvironmentTable(t *testing.T) {
+	tests := []struct {
+		name string
+		vars map[string]string
+		want bool
+	}{
+		{name: "nothing set", vars: map[string]string{}},
+		{name: "unrelated variable", vars: map[string]string{"PATH": "/bin"}},
+		{name: "empty CI", vars: map[string]string{"CI": ""}},
+	}
+	for _, name := range ciVariables {
+		tests = append(tests, struct {
+			name string
+			vars map[string]string
+			want bool
+		}{name: name, vars: map[string]string{name: "1"}, want: true})
+	}
+	// Any non-empty value counts, as upstream's Boolean() does.
+	tests = append(tests,
+		struct {
+			name string
+			vars map[string]string
+			want bool
+		}{name: "CI=0", vars: map[string]string{"CI": "0"}, want: true},
+		struct {
+			name string
+			vars map[string]string
+			want bool
+		}{name: "CI=false", vars: map[string]string{"CI": "false"}, want: true},
+	)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := frozenRestore(FrozenFromEnvironment, tc.vars); got != tc.want {
+				t.Errorf("frozenRestore(%v) = %v, want %v", tc.vars, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFrozenRestoreFlagOverrides(t *testing.T) {
+	ci := map[string]string{"CI": "1"}
+	if !frozenRestore(FrozenEnabled, map[string]string{}) {
+		t.Error("--frozen-lockfile did not force frozen mode")
+	}
+	if !frozenRestore(FrozenEnabled, ci) {
+		t.Error("--frozen-lockfile lost to the environment")
+	}
+	if frozenRestore(FrozenDisabled, ci) {
+		t.Error("--no-frozen-lockfile did not override the environment")
+	}
+	if frozenRestore(FrozenDisabled, map[string]string{}) {
+		t.Error("--no-frozen-lockfile forced frozen mode")
+	}
+}
+
+func TestFrozenRestoreFailures(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, project string) (*updateRunner, Env)
+		want  []string
+	}{
+		{
+			name: "missing lock",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				return newUpdateRunner(), frozenEnv(t, project)
+			},
+			want: []string{"skills-lock.json is absent or has no skills"},
+		},
+		{
+			name: "empty lock",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				saveProjectLock(t, project, map[string]lockfile.Entry{})
+				return newUpdateRunner(), frozenEnv(t, project)
+			},
+			want: []string{"skills-lock.json is absent or has no skills"},
+		},
+		{
+			name: "entry without a hash",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				saveProjectLock(t, project, map[string]lockfile.Entry{
+					"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+				})
+				return restoreRunner(t, restoreSource(t)), frozenEnv(t, project)
+			},
+			want: []string{"alpha has no content hash in skills-lock.json", "migrated from version 1"},
+		},
+		{
+			name: "missing installed folder",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				src := restoreSource(t)
+				entry := updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"})
+				digest, err := hash.Dir(filepath.Join(src, "skills", "alpha"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry.ComputedHash = digest
+				saveProjectLock(t, project, map[string]lockfile.Entry{"alpha": entry})
+				return restoreRunner(t, src), frozenEnv(t, project)
+			},
+			want: []string{"alpha is missing; skills-lock.json expects the installed content"},
+		},
+		{
+			name: "changed content",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				installed := installAlpha(t, project, ".agents/skills/alpha", "edited\n")
+				digest, err := hash.Dir(installed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry := updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"})
+				entry.ComputedHash = digest
+				saveProjectLock(t, project, map[string]lockfile.Entry{"alpha": entry})
+				writeSourceFile(t, installed, "SKILL.md", "---\nname: alpha\ndescription: d\n---\ndrifted\n")
+				return restoreRunner(t, restoreSource(t)), frozenEnv(t, project)
+			},
+			want: []string{"alpha has changed since skills-lock.json was written"},
+		},
+		{
+			name: "skill gone from the source",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				installed := installAlpha(t, project, ".agents/skills/alpha", "one\n")
+				digest, err := hash.Dir(installed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry := updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"})
+				entry.ComputedHash = digest
+				saveProjectLock(t, project, map[string]lockfile.Entry{"alpha": entry})
+				src := t.TempDir()
+				writeSourceFile(t, src, "skills/beta/SKILL.md", "---\nname: beta\ndescription: d\n---\n")
+				return restoreRunner(t, src), frozenEnv(t, project)
+			},
+			want: []string{"alpha not found in file:///repo"},
+		},
+		{
+			name: "source cannot be fetched",
+			setup: func(t *testing.T, project string) (*updateRunner, Env) {
+				installed := installAlpha(t, project, ".agents/skills/alpha", "one\n")
+				digest, err := hash.Dir(installed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry := updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"})
+				entry.ComputedHash = digest
+				saveProjectLock(t, project, map[string]lockfile.Entry{"alpha": entry})
+				runner := restoreRunner(t, restoreSource(t))
+				runner.fail[updateRepo] = "fatal: could not read from remote"
+				return runner, frozenEnv(t, project)
+			},
+			want: []string{"alpha cannot be restored from file:///repo:", "fatal: could not read from remote"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			runner, env := tc.setup(t, project)
+			before := snapshotFrozen(t, project)
+
+			_, err := Restore(RestoreOptions{Agents: []string{"opencode"}, Runner: runner}, env)
+			if err == nil {
+				t.Fatal("Restore succeeded, want a frozen failure")
+			}
+			message := err.Error()
+			if !strings.Contains(message, "Cannot install with --frozen-lockfile") {
+				t.Errorf("err = %v, want the frozen-lockfile diagnostic", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(message, want) {
+					t.Errorf("err = %v, want containing %q", err, want)
+				}
+			}
+			before.assertUnchanged(t, project)
+		})
+	}
+}
+
+func TestFrozenRestoreAggregateMessage(t *testing.T) {
+	project := t.TempDir()
+	src := restoreSource(t)
+	digest, err := hash.Dir(filepath.Join(src, "skills", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingFolder := updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"})
+	missingFolder.ComputedHash = digest
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": missingFolder,
+		"beta":  updateEntry(t, "", lockfile.Entry{SkillPath: "skills/beta/SKILL.md"}),
+	})
+	_, err = Restore(RestoreOptions{Agents: []string{"opencode"}, Runner: restoreRunner(t, src)},
+		frozenEnv(t, project))
+	if err == nil {
+		t.Fatal("Restore succeeded, want a frozen failure")
+	}
+	want := "Cannot install with --frozen-lockfile because skills-lock.json is not up to date:\n" +
+		"  alpha is missing; skills-lock.json expects the installed content\n" +
+		"  beta has no content hash in skills-lock.json " +
+		"(migrated from version 1, and the installed skill was missing or did not match)\n" +
+		"Run again with --no-frozen-lockfile to update it."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestFrozenRestoreAcceptsMatchingContent(t *testing.T) {
+	project := t.TempDir()
+	src := restoreSource(t)
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+		"beta":  updateEntry(t, "", lockfile.Entry{SkillPath: "skills/beta/SKILL.md"}),
+	})
+	env := updateTestEnv(t, project)
+	runner := restoreRunner(t, src)
+	if _, err := Restore(RestoreOptions{Agents: []string{"opencode", "claude-code"}, Runner: runner},
+		env); err != nil {
+		t.Fatalf("first restore: %v", err)
+	}
+	before := snapshotFrozen(t, project)
+	env.AgentEnv.Vars["CI"] = "1"
+
+	rep, err := Restore(RestoreOptions{Agents: []string{"opencode", "claude-code"}, Runner: runner}, env)
+	if err != nil {
+		t.Fatalf("frozen restore: %v", err)
+	}
+	if len(rep.Results) != 2 {
+		t.Fatalf("results = %+v, want both skills checked", rep.Results)
+	}
+	for _, res := range rep.Results {
+		if res.Status != RestoreSkipped {
+			t.Errorf("%s = %v, want a skip", res.Name, res.Status)
+		}
+	}
+	if rep.LockPath != "" {
+		t.Errorf("LockPath = %q, want no lock write", rep.LockPath)
+	}
+	before.assertUnchanged(t, project)
+}
+
+func TestFrozenRestoreDryRun(t *testing.T) {
+	project := t.TempDir()
+	src := restoreSource(t)
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+		"beta":  updateEntry(t, "", lockfile.Entry{SkillPath: "skills/beta/SKILL.md"}),
+	})
+	env := updateTestEnv(t, project)
+	runner := restoreRunner(t, src)
+	if _, err := Restore(RestoreOptions{Agents: []string{"opencode", "claude-code"}, Runner: runner},
+		env); err != nil {
+		t.Fatalf("first restore: %v", err)
+	}
+	link := filepath.Join(project, ".claude", "skills", "alpha")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFrozen(t, project)
+	env.AgentEnv.Vars["CI"] = "1"
+
+	rep, err := Restore(RestoreOptions{
+		Agents: []string{"opencode", "claude-code"}, DryRun: true, Runner: runner,
+	}, env)
+	if err != nil {
+		t.Fatalf("frozen dry run: %v", err)
+	}
+	var relinked bool
+	for _, res := range rep.Results {
+		if res.Name == "alpha" && res.Status == RestoreRelinked {
+			relinked = true
+		}
+	}
+	if !relinked {
+		t.Errorf("results = %+v, want the planned relink", rep.Results)
+	}
+	if rep.LockPath != "" {
+		t.Errorf("LockPath = %q, want no lock write", rep.LockPath)
+	}
+	before.assertUnchanged(t, project)
+}
+
+func TestFrozenRestoreDryRunStillValidates(t *testing.T) {
+	project := t.TempDir()
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+	})
+	_, err := Restore(RestoreOptions{Agents: []string{"opencode"}, DryRun: true,
+		Runner: restoreRunner(t, restoreSource(t))}, frozenEnv(t, project))
+	if err == nil || !strings.Contains(err.Error(), "has no content hash") {
+		t.Fatalf("err = %v, want the frozen validation to report the empty hash", err)
+	}
+}
+
+func TestNonFrozenRestoreRepairsInCI(t *testing.T) {
+	project := t.TempDir()
+	src := restoreSource(t)
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, "", lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+	})
+	env := frozenEnv(t, project)
+
+	rep, err := Restore(RestoreOptions{
+		Agents: []string{"opencode"}, Frozen: FrozenDisabled, Runner: restoreRunner(t, src),
+	}, env)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Status != RestoreRestored {
+		t.Fatalf("results = %+v, want the repair", rep.Results)
+	}
+	if rep.LockPath == "" {
+		t.Error("LockPath is empty, want the filled hash written")
+	}
+	lock, err := lockfile.Load(filepath.Join(project, lockfile.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := lock.Get("alpha")
+	want, err := hash.Dir(filepath.Join(project, ".agents", "skills", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ComputedHash != want {
+		t.Errorf("computedHash = %q, want %q", entry.ComputedHash, want)
+	}
+}
+
+func TestFrozenRestoreV1EmptyHash(t *testing.T) {
+	project := t.TempDir()
+	src := restoreSource(t)
+	legacy := `{
+  "version": 1,
+  "skills": {
+    "alpha": {"source": "` + updateRepo + `", "sourceUrl": "` + updateRepo + `",
+      "sourceType": "git", "commit": "` + strings.Repeat("a", 40) + `",
+      "skillPath": "skills/alpha/SKILL.md", "computedHash": ""}
+  }
+}
+`
+	lockPath := filepath.Join(project, lockfile.FileName)
+	if err := os.WriteFile(lockPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFrozen(t, project)
+
+	_, err := Restore(RestoreOptions{Agents: []string{"opencode"}, Runner: restoreRunner(t, src)},
+		frozenEnv(t, project))
+	if err == nil || !strings.Contains(err.Error(), "migrated from version 1") {
+		t.Fatalf("err = %v, want the version 1 empty-hash message", err)
+	}
+	before.assertUnchanged(t, project)
+
+	rep, err := Restore(RestoreOptions{
+		Agents: []string{"opencode"}, Frozen: FrozenDisabled, Runner: restoreRunner(t, src),
+	}, frozenEnv(t, project))
+	if err != nil {
+		t.Fatalf("normal restore: %v", err)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Status != RestoreRestored {
+		t.Fatalf("results = %+v, want the skill refreshed", rep.Results)
+	}
+	lock, err := lockfile.Load(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := lock.Get("alpha")
+	want, err := hash.Dir(filepath.Join(project, ".agents", "skills", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ComputedHash != want {
+		t.Errorf("computedHash = %q, want the refreshed hash %q", entry.ComputedHash, want)
+	}
+	if !strings.Contains(readFile(t, lockPath), `"version": 2`) {
+		t.Error("the repaired lock is not a version 2 lock")
 	}
 }
 

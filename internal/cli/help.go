@@ -71,6 +71,10 @@ Restore options:
                            Use '*' for all.
       --force              Reinstall even when the installed content matches the lock
       --dry-run            Print the plan and write nothing
+      --frozen-lockfile    Fail on drift; the default when CI, GITHUB_ACTIONS,
+                           GITLAB_CI, BUILDKITE, CIRCLECI, TRAVIS, TF_BUILD or
+                           JENKINS_URL is set
+      --no-frozen-lockfile Repair drift and rewrite hashes, even in CI
   -h, --help               Show this help
 
 Check options:

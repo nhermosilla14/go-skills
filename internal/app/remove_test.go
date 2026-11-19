@@ -19,7 +19,7 @@ func installForRemoval(t *testing.T, project string, copyMode bool) {
 		Agents: []string{"opencode", "claude-code"},
 		Yes:    true,
 		Copy:   copyMode,
-	}, testEnv(project))
+	}, addEnv(t, project))
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}

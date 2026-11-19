@@ -31,6 +31,18 @@ func loadScopeLock(env Env, agentEnv agents.Environment, global bool) (string, *
 	return path, lock, nil, err
 }
 
+// recordAgentSelection saves the agent selection of a project add in the global lock, which is
+// where restore reads the fallback from. A malformed global lock is reported, never overwritten.
+func recordAgentSelection(env agents.Environment, ids []string) error {
+	path := agents.GlobalLockPath(env)
+	lock, err := lockfile.LoadGlobal(path)
+	if err != nil {
+		return err
+	}
+	lock.SetLastSelectedAgents(ids)
+	return lock.Save(path)
+}
+
 // splitGlobalAgents separates the agents that have a global skills directory from the project-only
 // ones. The caller decides whether the project-only agents are dropped with a notice or reported
 // as failed targets.

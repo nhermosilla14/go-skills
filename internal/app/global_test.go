@@ -200,15 +200,22 @@ func TestGlobalRemoveDeletesUniversalAgentOwnDir(t *testing.T) {
 	}
 }
 
-func TestProjectAddNeverWritesTheGlobalLock(t *testing.T) {
+func TestProjectAddRecordsTheAgentSelection(t *testing.T) {
 	project := t.TempDir()
 	env := interactiveEnv(t, project)
 	if _, err := Add(AddOptions{Source: newSource(t), Yes: true, Agents: []string{"opencode"}},
 		env); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if _, err := os.Stat(agents.GlobalLockPath(env.AgentEnv)); !os.IsNotExist(err) {
-		t.Errorf("project add wrote the global lock: %v", err)
+	lock, err := lockfile.LoadGlobal(agents.GlobalLockPath(env.AgentEnv))
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	if len(lock.Skills) != 0 {
+		t.Errorf("the global lock tracks %v, want only the selection", lock.Skills)
+	}
+	if len(lock.LastSelectedAgents) != 1 || lock.LastSelectedAgents[0] != "opencode" {
+		t.Errorf("lastSelectedAgents = %v, want the project selection", lock.LastSelectedAgents)
 	}
 }
 

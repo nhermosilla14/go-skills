@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -154,6 +155,136 @@ func TestE2ERestoreFromLock(t *testing.T) {
 		t.Errorf("a dry run recreated .claude: %v", err)
 	}
 	assertNoNewTempDirs(t, before)
+}
+
+// TestE2ERestoreFrozen exercises the frozen-lockfile rules: a clean lock restores under CI, a
+// mutated skill fails without touching anything, a version 1 empty hash fails with its message and
+// is repaired by normal mode, and --no-frozen-lockfile repairs in CI.
+func TestE2ERestoreFrozen(t *testing.T) {
+	fx := newGitFixture(t)
+	tmpBefore := cloneTempDirs(t)
+	project := t.TempDir()
+	agents := []string{"-a", "opencode", "-a", "claude-code"}
+	if res := run(t, project, append([]string{"add", fx.url + "#v1", "-y"}, agents...)...); res.exit != 0 {
+		t.Fatalf("add exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	lockPath := filepath.Join(project, "skills-lock.json")
+
+	res := runEnv(t, project, []string{"CI=1"}, append([]string{"install"}, agents...)...)
+	if res.exit != 0 {
+		t.Fatalf("frozen install of a clean lock exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Restored 0, relinked 0, skipped 2, failed 0") {
+		t.Errorf("frozen install stderr misses the summary:\n%s", res.stderr)
+	}
+
+	// A mutated skill fails frozen and leaves the tree and the lock untouched.
+	alpha := filepath.Join(project, ".agents", "skills", "alpha", "SKILL.md")
+	if err := os.WriteFile(alpha, []byte("---\nname: alpha\ndescription: d\n---\nmutated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, project)
+	beforeLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = runEnv(t, project, []string{"CI=1"}, append([]string{"install"}, agents...)...)
+	if res.exit != 1 {
+		t.Fatalf("frozen install of drifted content exit = %d, want 1\nstderr:\n%s", res.exit, res.stderr)
+	}
+	for _, want := range []string{
+		"Cannot install with --frozen-lockfile",
+		"alpha has changed since skills-lock.json was written",
+		"Run again with --no-frozen-lockfile to update it.",
+	} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr misses %q:\n%s", want, res.stderr)
+		}
+	}
+	if after := snapshotTree(t, project); !reflect.DeepEqual(after, before) {
+		t.Errorf("a failed frozen run changed the project:\n got %v\nwant %v", after, before)
+	}
+	afterLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterLock.ModTime().Equal(beforeLock.ModTime()) {
+		t.Errorf("lock mtime = %v, want %v", afterLock.ModTime(), beforeLock.ModTime())
+	}
+
+	// --no-frozen-lockfile repairs the drift even in CI.
+	lockBytes, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = runEnv(t, project, []string{"CI=1"},
+		append([]string{"install", "--no-frozen-lockfile"}, agents...)...)
+	if res.exit != 0 {
+		t.Fatalf("non-frozen install in CI exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if raw, err := os.ReadFile(alpha); err != nil || !strings.Contains(string(raw), "version one") {
+		t.Errorf("alpha was not repaired: %q, %v", raw, err)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(lockBytes) {
+		t.Errorf("repairing the same content rewrote the lock: %v", err)
+	}
+
+	// A version 1 lock whose migrated hash is empty fails frozen and is repaired by normal mode.
+	entry := readLock(t, project).Skills["alpha"]
+	v1 := fmt.Sprintf(`{
+  "version": 1,
+  "skills": {
+    "alpha": {"source": %q, "sourceUrl": %q, "sourceType": "git", "commit": %q,
+      "skillPath": %q, "computedHash": ""}
+  }
+}
+`, entry.Source, entry.SourceURL, entry.Commit, entry.SkillPath)
+	if err := os.WriteFile(lockPath, []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err = os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res = runEnv(t, project, []string{"CI=1"}, append([]string{"install"}, agents...)...)
+	if res.exit != 1 {
+		t.Fatalf("frozen install of a v1 lock exit = %d, want 1\nstderr:\n%s", res.exit, res.stderr)
+	}
+	for _, want := range []string{
+		"Cannot install with --frozen-lockfile",
+		"alpha has no content hash in skills-lock.json",
+		"migrated from version 1",
+	} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr misses %q:\n%s", want, res.stderr)
+		}
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != v1 {
+		t.Errorf("a failed frozen run rewrote the v1 lock: %v", err)
+	}
+	afterLock, err = os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterLock.ModTime().Equal(beforeLock.ModTime()) {
+		t.Errorf("lock mtime = %v, want %v", afterLock.ModTime(), beforeLock.ModTime())
+	}
+
+	res = runEnv(t, project, []string{"CI=1"},
+		append([]string{"install", "--no-frozen-lockfile"}, agents...)...)
+	if res.exit != 0 {
+		t.Fatalf("normal install of a v1 lock exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	repaired := readLock(t, project)
+	if repaired.Version != 2 {
+		t.Errorf("lock version = %d, want 2", repaired.Version)
+	}
+	want := oracleHash(t, filepath.Join(project, ".agents", "skills", "alpha"))
+	if got := repaired.Skills["alpha"].ComputedHash; got != want {
+		t.Errorf("alpha computedHash = %q, want the refreshed hash %q", got, want)
+	}
+	assertNoNewTempDirs(t, tmpBefore)
 }
 
 func TestE2ERestoreMissingLock(t *testing.T) {

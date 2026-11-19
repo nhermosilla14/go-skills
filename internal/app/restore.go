@@ -17,11 +17,24 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/source"
 )
 
+// FrozenMode is how the command line chose the frozen-lockfile behaviour.
+type FrozenMode int
+
+const (
+	// FrozenFromEnvironment is the default: frozen when a CI variable is set.
+	FrozenFromEnvironment FrozenMode = iota
+	// FrozenEnabled is --frozen-lockfile: always frozen, over the environment and the other flag.
+	FrozenEnabled
+	// FrozenDisabled is --no-frozen-lockfile: never frozen, even in CI.
+	FrozenDisabled
+)
+
 // RestoreOptions are the inputs of the restore use case, as parsed from the command line.
 type RestoreOptions struct {
 	Agents []string      // agent identifiers, or "*"; empty follows the fallback chain
 	Force  bool          // reinstall even when the installed content matches the lock
 	DryRun bool          // report the plan and write nothing
+	Frozen FrozenMode    // frozen-lockfile mode; the zero value follows the environment
 	Runner source.Runner // git runner; nil uses PATH, tests pass a fake
 }
 
@@ -113,10 +126,11 @@ type restoreGroup struct {
 // their recorded commit, grouped by source, commit and install mode so one checkout serves a group.
 // Entries whose installed content already matches computedHash only get their agent links repaired;
 // the rest are reinstalled with the recorded mode. The lock is written only when a hash was filled
-// in or corrected, and never in a dry run.
+// in or corrected, and never in a dry run or a frozen run.
 func Restore(opts RestoreOptions, env Env) (RestoreReport, error) {
 	rep := RestoreReport{DryRun: opts.DryRun}
 	agentEnv := env.agentsEnv()
+	frozen := frozenRestore(opts.Frozen, agentEnv.Vars)
 	targets, err := restoreAgents(opts.Agents, agentEnv)
 	if err != nil {
 		return rep, err
@@ -124,6 +138,9 @@ func Restore(opts RestoreOptions, env Env) (RestoreReport, error) {
 	lockPath := filepath.Join(env.WorkDir, lockfile.FileName)
 	if _, err := os.Stat(lockPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if frozen {
+				return rep, frozenLockError{}
+			}
 			return rep, fmt.Errorf("no %s found in %s; install skills with skills add <source>",
 				lockfile.FileName, env.WorkDir)
 		}
@@ -134,11 +151,24 @@ func Restore(opts RestoreOptions, env Env) (RestoreReport, error) {
 		return rep, err
 	}
 	if len(lock.Skills) == 0 {
+		if frozen {
+			return rep, frozenLockError{}
+		}
 		return rep, emptyLockError{file: lockfile.FileName}
 	}
 	tasks, groups := planRestore(lock, &rep)
 	defer removeRestoreTrees(groups)
+	if frozen {
+		if lines := frozenLocalFailures(tasks, agentEnv); len(lines) > 0 {
+			return rep, frozenDriftError{lines: lines}
+		}
+	}
 	acquireRestoreGroups(groups, env, opts.Runner, &rep)
+	if frozen {
+		if lines := frozenSourceFailures(tasks, groups); len(lines) > 0 {
+			return rep, frozenDriftError{lines: lines}
+		}
+	}
 	changed := false
 	for _, task := range tasks {
 		if groups[task.group].err != "" {
@@ -150,13 +180,105 @@ func Restore(opts RestoreOptions, env Env) (RestoreReport, error) {
 		}
 		rep.Results = append(rep.Results, res)
 	}
-	if changed && !opts.DryRun {
+	if changed && !opts.DryRun && !frozen {
 		if err := lock.Save(lockPath); err != nil {
 			return rep, err
 		}
 		rep.LockPath = lockPath
 	}
 	return rep, nil
+}
+
+// ciVariables are the variables that make a restore frozen by default. Any non-empty value counts,
+// so CI=0 and CI=false still enable frozen mode.
+var ciVariables = []string{
+	"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TRAVIS", "TF_BUILD", "JENKINS_URL",
+}
+
+// frozenRestore resolves the frozen mode: --frozen-lockfile wins over --no-frozen-lockfile, and
+// both win over the environment.
+func frozenRestore(mode FrozenMode, vars map[string]string) bool {
+	switch mode {
+	case FrozenEnabled:
+		return true
+	case FrozenDisabled:
+		return false
+	}
+	for _, name := range ciVariables {
+		if vars[name] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// frozenLockError is the documented diagnostic of a frozen restore without a usable lock.
+type frozenLockError struct{}
+
+func (frozenLockError) Error() string {
+	return "Cannot install with --frozen-lockfile because skills-lock.json is absent or has no skills"
+}
+
+// frozenDriftError is the documented diagnostic of a frozen restore that found drift. It lists one
+// two-space-indented reason per entry.
+type frozenDriftError struct {
+	lines []string
+}
+
+func (e frozenDriftError) Error() string {
+	var b strings.Builder
+	b.WriteString("Cannot install with --frozen-lockfile because skills-lock.json is not up to date:")
+	for _, line := range e.lines {
+		b.WriteString("\n  ")
+		b.WriteString(line)
+	}
+	b.WriteString("\nRun again with --no-frozen-lockfile to update it.")
+	return b.String()
+}
+
+// frozenLocalFailures lists what a frozen restore refuses before fetching anything: an entry with
+// no recorded hash, and an installed folder that is missing or no longer hashes to the lock.
+func frozenLocalFailures(tasks []restoreTask, env agents.Environment) []string {
+	var lines []string
+	for _, t := range tasks {
+		name := skill.SanitizeDisplay(t.key)
+		if t.entry.ComputedHash == "" {
+			lines = append(lines, name+" has no content hash in skills-lock.json "+
+				"(migrated from version 1, and the installed skill was missing or did not match)")
+			continue
+		}
+		canonical := filepath.Join(scopeCanonicalDir(env, false), skill.SanitizeName(t.key))
+		digest, err := hash.Dir(canonical)
+		if err != nil {
+			lines = append(lines, name+" is missing; skills-lock.json expects the installed content")
+			continue
+		}
+		if !strings.EqualFold(digest, t.entry.ComputedHash) {
+			lines = append(lines, name+" has changed since skills-lock.json was written")
+		}
+	}
+	return lines
+}
+
+// frozenSourceFailures lists the locked entries whose source could not be fetched, or no longer
+// provides the recorded skill. The checkouts are temporary; nothing in the project is touched.
+func frozenSourceFailures(tasks []restoreTask, groups []*restoreGroup) []string {
+	var lines []string
+	for _, t := range tasks {
+		g := groups[t.group]
+		name := skill.SanitizeDisplay(t.key)
+		if g.err != "" {
+			lines = append(lines, fmt.Sprintf("%s cannot be restored from %s: %s",
+				name, g.source, skill.SanitizeDisplay(g.err)))
+			continue
+		}
+		record := updateRecord{SkillName: t.entry.SkillName}
+		if _, _, ok := locateUpdateSkill(g.found.Skills, updateRecordedName(record, t.key),
+			t.entry.SkillPath); !ok {
+			lines = append(lines, fmt.Sprintf("%s not found in %s", name, g.source))
+		}
+	}
+	return lines
 }
 
 // emptyLockError is the documented diagnostic of a lock with no skills. It is a type because the
