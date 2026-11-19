@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/nhermosilla14/go-skills/internal/agents"
 )
 
 // runGlobal runs the binary with HOME and XDG_STATE_HOME pointing at an isolated directory, so a
@@ -21,9 +23,10 @@ import (
 func runGlobal(t *testing.T, dir, home string, args ...string) result {
 	t.Helper()
 	var env []string
+	host := hostEnvNames()
 	for _, kv := range os.Environ() {
 		key, _, _ := splitEnv(kv)
-		if globalTestVariables[key] {
+		if globalTestVariables[key] || host[key] {
 			continue
 		}
 		env = append(env, kv)
@@ -61,6 +64,81 @@ func splitEnv(kv string) (string, string, bool) {
 		}
 	}
 	return kv, "", false
+}
+
+// hostEnvNames are the host-agent markers host detection reads. A test process started by a coding
+// agent inherits them, so every run drops them unless the test adds one back.
+func hostEnvNames() map[string]bool {
+	out := map[string]bool{}
+	for _, name := range agents.HostVariables() {
+		out[name] = true
+	}
+	return out
+}
+
+// withoutHost drops the host-agent markers from an environment.
+func withoutHost(env []string) []string {
+	host := hostEnvNames()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if key, _, _ := splitEnv(kv); host[key] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// TestE2EGlobalLegacyDirs walks add, list, update and remove through OpenClaw's legacy home, which
+// must be used by every command and not only by path resolution.
+func TestE2EGlobalLegacyDirs(t *testing.T) {
+	fx := newUpdateFixture(t)
+	project := t.TempDir()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".clawdbot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(home, ".clawdbot", "skills", "alpha")
+
+	res := runGlobal(t, project, home, "add", fx.url+"#v1", "-a", "openclaw", "-g", "-y")
+	if res.exit != 0 {
+		t.Fatalf("add exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "SKILL.md")); err != nil {
+		t.Fatalf("the skill was not installed in the legacy home: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openclaw")); !os.IsNotExist(err) {
+		t.Errorf("the add created .openclaw next to the legacy home: %v", err)
+	}
+
+	res = runGlobal(t, project, home, "list", "-g")
+	if res.exit != 0 || !strings.Contains(res.stdout, legacy) {
+		t.Fatalf("list exit = %d, stdout:\n%s", res.exit, res.stdout)
+	}
+
+	runGit(t, fx.bare, "tag", "-f", "v1", fx.second)
+	res = runGlobal(t, project, home, "update", "-g")
+	if res.exit != 0 {
+		t.Fatalf("update exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(legacy, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("reading the updated copy: %v", err)
+	}
+	if !strings.Contains(string(raw), "version two") {
+		t.Errorf("legacy copy = %q, want the advanced content", raw)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openclaw", "skills", "alpha")); !os.IsNotExist(err) {
+		t.Errorf("update wrote into .openclaw: %v", err)
+	}
+
+	res = runGlobal(t, project, home, "remove", "alpha", "-g", "-y")
+	if res.exit != 0 {
+		t.Fatalf("remove exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("the legacy copy survived removal: %v", err)
+	}
 }
 
 // globalLockPath is where the injected XDG_STATE_HOME places the global lock.

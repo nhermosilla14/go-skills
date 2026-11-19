@@ -107,6 +107,10 @@ func Remove(opts RemoveOptions, env Env, prompters ...Prompter) (RemoveReport, e
 	if len(prompters) > 0 {
 		prompter = prompters[0]
 	}
+	if env.Host.ID != "" {
+		// A host agent cannot answer a prompt: removals run non-interactively (upstream forces -y).
+		opts.Yes = true
+	}
 	allMode, names, err := removeSelection(opts)
 	if err != nil {
 		return RemoveReport{}, err
@@ -180,7 +184,8 @@ func Remove(opts RemoveOptions, env Env, prompters ...Prompter) (RemoveReport, e
 	}
 
 	universal := universalSelected(selected)
-	return executeRemove(agentEnv, lock, targets, selected, universal, explicitFilter, opts.Global, report)
+	return executeRemove(agentEnv, lock, targets, selected, universal, explicitFilter, opts.Global,
+		len(names) > 0, report)
 }
 
 // removeLock is the lock of the scope, so removal code does not care which version it is.
@@ -611,8 +616,14 @@ func removePromptRequired(isTTY bool) error {
 
 // executeRemove deletes the selected directories, then the canonical copy and lock entry when
 // nothing else uses them. Failures are collected per target, never rolled back.
+//
+// A named removal refuses to delete a directory that lives inside a non-dot agent skills
+// directory of the project (OpenClaw's skills/, AstrBot's data/skills, Eve's agent/skills) when
+// the lock does not track it, or when its content is not the unmodified copy the lock describes:
+// those directories double as source folders, so the lock decides what may be deleted from them.
+// --all and --skill '*' keep their contract and never delete an untracked directory at all.
 func executeRemove(agentEnv agents.Environment, lock removeLock,
-	targets []removeTarget, selected []agents.Agent, universal, explicitFilter, global bool,
+	targets []removeTarget, selected []agents.Agent, universal, explicitFilter, global, named bool,
 	report RemoveReport) (RemoveReport, error) {
 	canonicalDir := scopeCanonicalDir(agentEnv, global)
 	lockChanged := false
@@ -633,6 +644,13 @@ func executeRemove(agentEnv agents.Environment, lock removeLock,
 				}
 				report.Results = append(report.Results, RemoveResult{
 					Skill: t.Name, Agent: a.ID, Path: path, Status: RemoveFailed, Message: err.Error(),
+				})
+				continue
+			}
+			if named && !global && unmanagedNonDotDir(a, path, t, lock, agentEnv) {
+				report.Results = append(report.Results, RemoveResult{
+					Skill: t.Name, Agent: a.ID, Path: path, Status: RemoveFailed,
+					Message: "refusing to delete it: it is not an unmodified copy recorded in the lock file",
 				})
 				continue
 			}
@@ -773,6 +791,55 @@ func skillRemains(all []agents.Agent, env agents.Environment, dirName, canonical
 		}
 	}
 	return false
+}
+
+// computedHash is the content hash the lock records for a key, if any.
+func (l removeLock) computedHash(key string) (string, bool) {
+	if l.global != nil {
+		entry, ok := l.global.Get(key)
+		return entry.SkillFolderHash, ok
+	}
+	entry, ok := l.project.Get(key)
+	return entry.ComputedHash, ok
+}
+
+// unmanagedNonDotDir reports whether a named removal must keep a directory: it sits in a non-dot
+// agent skills directory of the project and either the lock does not track it or its content is
+// not the copy the lock describes. Symlinks and flat files are never guarded, because unlinking
+// them cannot destroy a source folder.
+func unmanagedNonDotDir(a agents.Agent, path string, t removeTarget, lock removeLock,
+	env agents.Environment) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false
+	}
+	if !nonDotProjectDir(env.Cwd, a.BaseDir(env, false)) {
+		return false
+	}
+	if t.LockKey == "" {
+		return true
+	}
+	want, ok := lock.computedHash(t.LockKey)
+	if !ok || want == "" {
+		return true
+	}
+	got, err := hashInstalled(path)
+	return err != nil || !strings.EqualFold(got, want)
+}
+
+// nonDotProjectDir reports whether dir is a project directory whose first segment is not dotted:
+// OpenClaw's skills/, AstrBot's data/skills and Eve's agent/skills double as source folders.
+func nonDotProjectDir(project, dir string) bool {
+	rel, err := filepath.Rel(project, dir)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	first := rel
+	if i := strings.IndexRune(rel, filepath.Separator); i >= 0 {
+		first = rel[:i]
+	}
+	return !strings.HasPrefix(first, ".")
 }
 
 // removeAtResult removes path below root and reports the outcome. Category directories are never

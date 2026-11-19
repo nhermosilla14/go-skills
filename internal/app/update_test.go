@@ -644,9 +644,36 @@ func TestUpdateScopePrompt(t *testing.T) {
 	if rep.Scope != string(ScopeGlobal) {
 		t.Errorf("scope = %q, want global", rep.Scope)
 	}
-	both := NewScripted(t, Answers{Scope: ScopeBoth})
-	if _, err := Update(UpdateOptions{Runner: runner}, envFor(t, other), both); !errors.Is(err, ErrUsage) {
-		t.Fatalf("err = %v, want ErrUsage for both scopes", err)
+	if len(rep.Phases) != 0 {
+		t.Errorf("phases = %+v, want a single-scope report", rep.Phases)
+	}
+}
+
+// TestUpdateScopePromptBoth runs the picker's Both answer: the global phase runs first, and the
+// project phase follows, each with its own report.
+func TestUpdateScopePromptBoth(t *testing.T) {
+	project := projectWithSkill(t)
+	env := envFor(t, project)
+	runner := newUpdateRunner()
+	runner.trees[updateRepo] = updateSource(t, "one\n")
+
+	prompter := NewScripted(t, Answers{Scope: ScopeBoth})
+	rep, err := Update(UpdateOptions{Runner: runner}, env, prompter)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(rep.Phases) != 2 {
+		t.Fatalf("phases = %+v, want global then project", rep.Phases)
+	}
+	if rep.Phases[0].Scope != string(ScopeGlobal) || rep.Phases[1].Scope != string(ScopeProject) {
+		t.Errorf("phase scopes = %q, %q, want global then project",
+			rep.Phases[0].Scope, rep.Phases[1].Scope)
+	}
+	if !rep.Phases[0].NothingToUpdate {
+		t.Errorf("global phase = %+v, want nothing to update", rep.Phases[0])
+	}
+	if len(rep.Phases[1].Results) != 1 || rep.Phases[1].Results[0].Status != UpdateCurrent {
+		t.Errorf("project phase = %+v, want alpha current", rep.Phases[1])
 	}
 }
 
@@ -659,8 +686,12 @@ func TestUpdateNothingToUpdate(t *testing.T) {
 	if !rep.NothingToUpdate {
 		t.Fatalf("report = %+v, want nothing to update", rep)
 	}
-	if !hasNote(rep.Notes, "No project skills to update.") {
-		t.Errorf("notes = %v, want the empty message", rep.Notes)
+	// Without project skills the default scope is global, whose lock is empty too.
+	if !hasNote(rep.Notes, "No global skills tracked in lock file.") {
+		t.Errorf("notes = %v, want the empty global message", rep.Notes)
+	}
+	if rep.Scope != string(ScopeGlobal) {
+		t.Errorf("scope = %q, want global", rep.Scope)
 	}
 	if rep.Failed() || rep.Changed() || rep.Skipped() {
 		t.Errorf("report = %+v, want a clean empty run", rep)
@@ -686,6 +717,159 @@ func envFor(t *testing.T, project string) Env {
 	}
 	env.IsTTY = true
 	return env
+}
+
+// installGlobalAlpha writes a global alpha install and its lock entry in env's isolated home.
+func installGlobalAlpha(t *testing.T, env Env, body string) string {
+	t.Helper()
+	dir := writeProjectSkill(t, env.AgentEnv.Home, ".agents/skills/alpha", "alpha", "d")
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: alpha\ndescription: d\n---\n"+body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := hash.Dir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := lockfile.NewGlobal()
+	lock.Put("alpha", lockfile.GlobalEntry{
+		Source: updateRepo, SourceURL: updateRepo, SourceType: "git",
+		Commit: strings.Repeat("a", 40), SkillPath: "skills/alpha/SKILL.md",
+		SkillFolderHash: digest, InstalledAt: "2026-01-01T00:00:00.000Z",
+		UpdatedAt: "2026-01-01T00:00:00.000Z",
+	})
+	if err := lock.Save(agents.GlobalLockPath(env.AgentEnv)); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestUpdateNamesWithoutFlagsRunBothScopes proves the global phase runs before the project phase.
+func TestUpdateNamesWithoutFlagsRunBothScopes(t *testing.T) {
+	project := t.TempDir()
+	installed := installAlpha(t, project, ".agents/skills/alpha", "one\n")
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, installed, lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+	})
+	env := updateTestEnv(t, project)
+	globalInstalled := installGlobalAlpha(t, env, "one\n")
+	runner := newUpdateRunner()
+	runner.trees[updateRepo] = updateSource(t, "two\n")
+	runner.commits[updateRepo] = strings.Repeat("b", 40)
+
+	rep, err := Update(UpdateOptions{Skills: []string{"alpha"}, Runner: runner}, env)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if rep.Scope != string(ScopeBoth) || len(rep.Phases) != 2 {
+		t.Fatalf("report = %+v, want two phases", rep)
+	}
+	if rep.Phases[0].Scope != string(ScopeGlobal) || rep.Phases[1].Scope != string(ScopeProject) {
+		t.Errorf("phase scopes = %q, %q, want global then project",
+			rep.Phases[0].Scope, rep.Phases[1].Scope)
+	}
+	for _, phase := range rep.Phases {
+		if len(phase.Results) != 1 || phase.Results[0].Status != UpdateUpdated {
+			t.Errorf("phase %s = %+v, want one update", phase.Scope, phase.Results)
+		}
+	}
+	for _, dir := range []string{globalInstalled, installed} {
+		if got := readFile(t, filepath.Join(dir, "SKILL.md")); !strings.Contains(got, "two") {
+			t.Errorf("%s = %q, want the new content", dir, got)
+		}
+	}
+	if !rep.Changed() || rep.Failed() {
+		t.Errorf("report = %+v, want changes without failures", rep)
+	}
+	if rep.LockPath == "" {
+		t.Error("LockPath is empty, want a lock write")
+	}
+}
+
+// TestUpdateBothScopesCountFailuresPerPhase fails the global source and updates the project.
+func TestUpdateBothScopesCountFailuresPerPhase(t *testing.T) {
+	project := t.TempDir()
+	installed := installAlpha(t, project, ".agents/skills/alpha", "one\n")
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": updateEntry(t, installed, lockfile.Entry{SkillPath: "skills/alpha/SKILL.md"}),
+	})
+	env := updateTestEnv(t, project)
+	globalLock := lockfile.NewGlobal()
+	dir := writeProjectSkill(t, env.AgentEnv.Home, ".agents/skills/alpha", "alpha", "d")
+	globalLock.Put("alpha", lockfile.GlobalEntry{
+		Source: "file:///gone", SourceURL: "file:///gone", SourceType: "git",
+		Commit: strings.Repeat("a", 40), SkillPath: "skills/alpha/SKILL.md",
+		SkillFolderHash: mustHash(t, dir),
+	})
+	if err := globalLock.Save(agents.GlobalLockPath(env.AgentEnv)); err != nil {
+		t.Fatal(err)
+	}
+	runner := newUpdateRunner()
+	runner.trees[updateRepo] = updateSource(t, "two\n")
+	runner.fail["file:///gone"] = "fatal: repository not found"
+
+	rep, err := Update(UpdateOptions{Skills: []string{"alpha"}, Runner: runner}, env)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(rep.Phases) != 2 {
+		t.Fatalf("phases = %+v, want both", rep.Phases)
+	}
+	if !rep.Phases[0].Failed() || rep.Phases[0].Changed() {
+		t.Errorf("global phase = %+v, want the failed check only", rep.Phases[0])
+	}
+	if rep.Phases[1].Failed() || !rep.Phases[1].Changed() {
+		t.Errorf("project phase = %+v, want the update", rep.Phases[1])
+	}
+	if !rep.Failed() {
+		t.Error("report is clean, want the global phase to fail the run")
+	}
+	if len(runner.clones) != 2 {
+		t.Errorf("clones = %v, want one per phase", runner.clones)
+	}
+}
+
+// TestUpdateGlobalAndProjectFlagsRunBoth accepts -g with -p as both phases, as upstream does.
+func TestUpdateGlobalAndProjectFlagsRunBoth(t *testing.T) {
+	project := t.TempDir()
+	env := updateTestEnv(t, project)
+	rep, err := Update(UpdateOptions{Global: true, Project: true}, env)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(rep.Phases) != 2 || rep.Phases[0].Scope != string(ScopeGlobal) {
+		t.Fatalf("phases = %+v, want global then project", rep.Phases)
+	}
+}
+
+// TestUpdateWithoutNamesUsesGlobalWhenTheProjectHasNoSkills follows the documented fallback.
+func TestUpdateWithoutNamesUsesGlobalWhenTheProjectHasNoSkills(t *testing.T) {
+	project := t.TempDir()
+	env := updateTestEnv(t, project)
+	installGlobalAlpha(t, env, "one\n")
+	runner := newUpdateRunner()
+	runner.trees[updateRepo] = updateSource(t, "one\n")
+
+	rep, err := Update(UpdateOptions{Yes: true, Runner: runner}, env)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if rep.Scope != string(ScopeGlobal) || len(rep.Phases) != 0 {
+		t.Fatalf("report = %+v, want the global scope only", rep)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Status != UpdateCurrent {
+		t.Errorf("results = %+v, want the global skill checked", rep.Results)
+	}
+}
+
+// mustHash is hash.Dir for setup code.
+func mustHash(t *testing.T, dir string) string {
+	t.Helper()
+	digest, err := hash.Dir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }
 
 // hasNote reports whether one of the report notes contains want.

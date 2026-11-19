@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/nhermosilla14/go-skills/internal/agents"
+	"github.com/nhermosilla14/go-skills/internal/hash"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
+	"github.com/nhermosilla14/go-skills/internal/skill"
 	"github.com/nhermosilla14/go-skills/internal/source"
 )
 
@@ -80,14 +83,14 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		if len(opts.Skills) > 0 && !selected[key] {
 			continue
 		}
-		c, ok := byKey[key]
+		ref, status, ok := checkTarget(agentEnv, lock, key, byKey)
 		if !ok {
 			continue // in the lock but not on disk: nothing installed to check
 		}
-		if c.Status == StatusModified {
+		if status == StatusModified {
 			report.Modified = append(report.Modified, key)
 		}
-		update, err := checkUpdate(ctx, c.Ref, opts.Runner)
+		update, err := checkUpdate(ctx, ref, opts.Runner)
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", key, err))
 			continue
@@ -97,6 +100,71 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		}
 	}
 	return report, nil
+}
+
+// checkTarget resolves the recorded state of one lock key. A project entry that records an Eve
+// placement is compared through the flat files the lock lists, so a directory the scan found but
+// the placement did not write cannot hide a changed or missing copy.
+func checkTarget(agentEnv agents.Environment, lock *lockfile.File, key string,
+	byKey map[string]comparedSkill) (lockRef, Status, bool) {
+	c, installed := byKey[key]
+	if lock != nil {
+		entry, tracked := lock.Get(key)
+		if tracked && evePlaced(entry.Subagents) && !dirExists(scopeCanonicalDir(agentEnv, false), key) {
+			status, present := eveFlatStatus(agentEnv, skill.SanitizeName(key), entry)
+			if !present {
+				return lockRef{}, StatusMissing, false
+			}
+			return refOf(entry), status, true
+		}
+	}
+	if !installed {
+		return lockRef{}, StatusMissing, false
+	}
+	return c.Ref, c.Status, true
+}
+
+// eveFlatStatus hashes the recorded Eve flat files. present is false when none of them is on disk;
+// otherwise every recorded file must exist and the first one must still hash to the lock.
+func eveFlatStatus(env agents.Environment, name string, entry lockfile.Entry) (Status, bool) {
+	files := eveFlatFiles(env, name, entry.Subagents)
+	present, missing := false, false
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			missing = true
+			continue
+		}
+		present = true
+	}
+	if !present {
+		return StatusMissing, false
+	}
+	if missing || entry.ComputedHash == "" {
+		return StatusModified, true
+	}
+	digest, err := hash.SingleFile(files[0])
+	if err != nil || !strings.EqualFold(digest, entry.ComputedHash) {
+		return StatusModified, true
+	}
+	return StatusTracked, true
+}
+
+// dirExists reports whether the lock key names a skill directory that is on disk.
+func dirExists(canonicalDir, key string) bool {
+	_, err := os.Stat(filepath.Join(canonicalDir, skill.SanitizeName(key)))
+	return err == nil
+}
+
+// refOf is the fetch information a project lock entry carries.
+func refOf(entry lockfile.Entry) lockRef {
+	return lockRef{
+		Source:     entry.Source,
+		SourceURL:  entry.SourceURL,
+		SourceType: entry.SourceType,
+		SkillName:  entry.SkillName,
+		Ref:        entry.Ref,
+		Commit:     entry.Commit,
+	}
 }
 
 // selectCheckKeys resolves the optional name filter, reporting the names that match no lock key.

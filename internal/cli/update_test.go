@@ -84,6 +84,39 @@ func TestWriteUpdateSuppressesTheSummaryWhenSkipping(t *testing.T) {
 	}
 }
 
+func TestWriteUpdateBothScopes(t *testing.T) {
+	var out bytes.Buffer
+	WriteUpdate(&out, app.UpdateReport{
+		Scope: string(app.ScopeBoth),
+		Phases: []app.UpdateReport{
+			{
+				Scope:           string(app.ScopeGlobal),
+				NothingToUpdate: true,
+				Notes:           []string{"No global skills tracked in lock file."},
+			},
+			{
+				Scope:   string(app.ScopeProject),
+				Checks:  []app.UpdateCheck{{Source: "file:///repo"}},
+				Results: []app.UpdateResult{{Name: "alpha", Status: app.UpdateCurrent}},
+			},
+		},
+	})
+	want := `Checking for skill updates…
+
+Global Skills
+
+No global skills tracked in lock file.
+
+Project Skills
+
+Checking skills from source: file:///repo
+✓ All project skills are up to date
+`
+	if out.String() != want {
+		t.Errorf("output =\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
 func TestWriteUpdateSanitizesUntrustedText(t *testing.T) {
 	var out bytes.Buffer
 	WriteUpdate(&out, app.UpdateReport{

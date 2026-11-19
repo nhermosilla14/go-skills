@@ -78,7 +78,7 @@ func runEnv(t *testing.T, dir string, extraEnv []string, args ...string) result 
 	t.Helper()
 	cmd := exec.Command(skillsBin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(withoutCI(os.Environ()), extraEnv...)
+	cmd.Env = append(withoutHost(withoutCI(os.Environ())), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

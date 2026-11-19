@@ -68,27 +68,39 @@ func offerFindSkills(env Env, agentEnv agents.Environment, targets []string, pro
 	out := &OfferReport{Accepted: true, Results: report.Results}
 	if err != nil {
 		out.Warnings = append(out.Warnings, "could not install find-skills: "+err.Error())
-		return out
+	} else {
+		out.Warnings = append(out.Warnings, report.Warnings...)
+		if report.Failed() {
+			out.Warnings = append(out.Warnings,
+				"find-skills did not install for every agent; install it with 'skills add "+
+					findSkillsSource+"@find-skills -g'")
+		}
 	}
-	out.Warnings = append(out.Warnings, report.Warnings...)
-	if report.Failed() {
-		out.Warnings = append(out.Warnings,
-			"find-skills did not install for every agent; install it with 'skills add "+
-				findSkillsSource+"@find-skills -g'")
+	// The install rewrote the global lock, so the dismissal is recorded on a fresh copy and the
+	// question is never asked again, whether the install succeeded or not.
+	if lock, err := lockfile.LoadGlobal(path); err == nil {
+		var warnings []string
+		out.Dismissed, warnings = dismissFindSkills(path, lock)
+		out.Warnings = append(out.Warnings, warnings...)
 	}
 	return out
 }
 
 // declineFindSkills records the dismissal and reports whether it was written.
 func declineFindSkills(path string, lock *lockfile.GlobalFile) *OfferReport {
-	lock.DismissPrompt(FindSkillsPrompt)
-	out := &OfferReport{Declined: true, Dismissed: true}
-	if err := lock.Save(path); err != nil {
-		out.Dismissed = false
-		out.Warnings = append(out.Warnings,
-			"could not record the find-skills dismissal: "+err.Error())
-	}
+	out := &OfferReport{Declined: true}
+	out.Dismissed, out.Warnings = dismissFindSkills(path, lock)
 	return out
+}
+
+// dismissFindSkills sets the one-time dismissal flag on lock and saves it, so a later add never
+// asks again. It reports whether the flag was written, and the warning when it was not.
+func dismissFindSkills(path string, lock *lockfile.GlobalFile) (bool, []string) {
+	lock.DismissPrompt(FindSkillsPrompt)
+	if err := lock.Save(path); err != nil {
+		return false, []string{"could not record the find-skills dismissal: " + err.Error()}
+	}
+	return true, nil
 }
 
 // withoutAgent returns the identifiers except the named one.

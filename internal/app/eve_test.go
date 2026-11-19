@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -152,6 +153,48 @@ func writeEveFile(t *testing.T, project, rel, content string) string {
 	t.Helper()
 	writeSourceFile(t, project, rel, content)
 	return filepath.Join(project, filepath.FromSlash(rel))
+}
+
+// TestCheckReadsEveFlatInstall verifies an Eve placement through the flat files the lock records,
+// so a deleted or changed copy is a local change even when another copy is on disk.
+func TestCheckReadsEveFlatInstall(t *testing.T) {
+	project, env := newEveProject(t)
+	body := "---\nname: alpha\ndescription: d\n---\none\n"
+	root := writeEveFile(t, project, "agent/skills/alpha.md", body)
+	reviewer := writeEveFile(t, project, "agent/subagents/reviewer/skills/alpha.md", body)
+	digest, err := hash.SingleFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveProjectLock(t, project, map[string]lockfile.Entry{"alpha": {
+		Source: "./src", SourceType: "local",
+		Subagents: []string{"", "reviewer"}, ComputedHash: digest,
+	}})
+
+	rep, err := Check(context.Background(), CheckOptions{}, env)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if rep.Failed() {
+		t.Fatalf("report = %+v, want the flat install to be current", rep)
+	}
+
+	// A copy the lock does not list is not the recorded placement: deleting the root file while a
+	// subagent copy remains is a local change, not a current install.
+	writeEveFile(t, project, "agent/subagents/writer/skills/alpha.md", body)
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = Check(context.Background(), CheckOptions{}, env)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(rep.Modified) != 1 || rep.Modified[0] != "alpha" {
+		t.Errorf("modified = %v, want the recorded placement reported", rep.Modified)
+	}
+	if _, err := os.Stat(reviewer); err != nil {
+		t.Errorf("the check touched an installed file: %v", err)
+	}
 }
 
 func TestUpdateReappliesTheEvePlacement(t *testing.T) {

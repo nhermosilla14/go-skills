@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nhermosilla14/go-skills/internal/agents"
 	"github.com/nhermosilla14/go-skills/internal/lockfile"
 )
 
@@ -41,6 +42,54 @@ func requireExists(t *testing.T, path string, want bool) {
 	if exists != want {
 		t.Fatalf("%s exists = %v, want %v (err %v)", path, exists, want, err)
 	}
+}
+
+// TestRemoveHostModeIsNonInteractive proves a detected host agent removes without asking, while
+// the same command keeps the documented interactive refusal without one.
+func TestRemoveHostModeIsNonInteractive(t *testing.T) {
+	project := t.TempDir()
+	installForRemoval(t, project, false)
+
+	plain := addEnv(t, project)
+	if _, err := Remove(RemoveOptions{Skills: []string{"flat"}, Agents: []string{"opencode"}}, plain); !errors.Is(err, ErrPromptRequired) {
+		t.Fatalf("err = %v, want the interactive refusal", err)
+	}
+
+	host := addEnv(t, project)
+	host.Host = agents.Host{ID: "opencode", Name: "OpenCode"}
+	rep, err := Remove(RemoveOptions{Skills: []string{"flat"}, Agents: []string{"opencode"}}, host)
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if rep.Failed() {
+		t.Errorf("results = %+v, want a clean removal", rep.Results)
+	}
+}
+
+// TestRemoveGuardKeepsAModifiedCopy covers the second half of the rule: a tracked directory in a
+// non-dot agent directory is kept when it holds files the lock entry does not describe.
+func TestRemoveGuardKeepsAModifiedCopy(t *testing.T) {
+	project := t.TempDir()
+	dir := writeProjectSkill(t, project, "data/skills/alpha", "alpha", "d")
+	saveProjectLock(t, project, map[string]lockfile.Entry{
+		"alpha": {Source: "./src", SourceType: "local", ComputedHash: mustHash(t, dir)},
+	})
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("hand written\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Remove(RemoveOptions{Skills: []string{"alpha"}, Agents: []string{"astrbot"}, Yes: true},
+		testEnv(project))
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if !rep.Failed() {
+		t.Fatalf("results = %+v, want the guarded directory refused", rep.Results)
+	}
+	if !strings.Contains(rep.Results[0].Message, "not an unmodified copy") {
+		t.Errorf("message = %q", rep.Results[0].Message)
+	}
+	requireExists(t, filepath.Join(dir, "notes.md"), true)
 }
 
 func TestRemoveKeepsCanonicalWhileAnotherAgentLinksIt(t *testing.T) {

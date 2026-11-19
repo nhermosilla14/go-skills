@@ -23,7 +23,7 @@ const (
 	ScopeProject Scope = "project"
 	// ScopeGlobal installs into the user's home directory.
 	ScopeGlobal Scope = "global"
-	// ScopeBoth updates both scopes. Not supported yet.
+	// ScopeBoth runs both scopes, global first.
 	ScopeBoth Scope = "both"
 )
 

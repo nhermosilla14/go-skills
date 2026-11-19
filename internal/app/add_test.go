@@ -77,6 +77,78 @@ func TestAddRequiresYes(t *testing.T) {
 	}
 }
 
+// hostAddEnv is addEnv with a host agent detected, as the CLI records it once at start.
+func hostAddEnv(t *testing.T, project string) Env {
+	t.Helper()
+	env := addEnv(t, project)
+	env.Host = agents.Host{ID: "opencode", Name: "OpenCode"}
+	return env
+}
+
+// TestAddHostModeTargetsTheHostAgent proves a detected host agent makes the run non-interactive
+// and, without --agent, targets that agent plus the universal agents.
+func TestAddHostModeTargetsTheHostAgent(t *testing.T) {
+	project := t.TempDir()
+	rep, err := Add(AddOptions{Source: newSource(t)}, hostAddEnv(t, project))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if rep.Failed() {
+		t.Fatalf("results = %+v", rep.Results)
+	}
+	targets := agents.HostTargets("opencode")
+	var installed int
+	for _, res := range rep.Results {
+		if res.Status == install.Installed {
+			installed++
+		}
+	}
+	if installed != len(targets) {
+		t.Errorf("installed targets = %d, want the %d host targets", installed, len(targets))
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "skills", "flat", "SKILL.md")); err != nil {
+		t.Errorf("canonical copy missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "flat")); !os.IsNotExist(err) {
+		t.Errorf("the host run installed for an agent nobody asked for: %v", err)
+	}
+}
+
+// TestAddHostModeKeepsAnExplicitAgent proves --agent always wins over the host target set.
+func TestAddHostModeKeepsAnExplicitAgent(t *testing.T) {
+	project := t.TempDir()
+	rep, err := Add(AddOptions{Source: newSource(t), Agents: []string{"claude-code"}},
+		hostAddEnv(t, project))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if rep.Failed() {
+		t.Fatalf("results = %+v", rep.Results)
+	}
+	if len(rep.Results) != 1 || rep.Results[0].Agent != "claude-code" {
+		t.Errorf("results = %+v, want the explicit agent only", rep.Results)
+	}
+}
+
+// TestAddListIgnoresTheSkillFilter keeps upstream's --list contract: every discovered skill is
+// listed, even when --skill names one of them.
+func TestAddListIgnoresTheSkillFilter(t *testing.T) {
+	src := newSource(t)
+	writeSourceFile(t, src, "skills/second/SKILL.md", "---\nname: second\ndescription: d\n---\n")
+	rep, err := Add(AddOptions{Source: src, List: true, Skills: []string{"flat"}},
+		addEnv(t, t.TempDir()))
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	var names []string
+	for _, s := range rep.Listed {
+		names = append(names, s.Name)
+	}
+	if len(names) != 2 || names[0] != "flat" || names[1] != "second" {
+		t.Errorf("listed = %v, want every discovered skill", names)
+	}
+}
+
 func TestAddRejectsInvalidAgent(t *testing.T) {
 	_, err := Add(AddOptions{Source: newSource(t), Agents: []string{"claude_code"}, Yes: true}, addEnv(t, t.TempDir()))
 	if !errors.Is(err, ErrUsage) {

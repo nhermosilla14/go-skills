@@ -26,7 +26,7 @@ func runFind(opts cli.FindOptions, stdout, stderr io.Writer) int {
 		cli.WriteFindResults(stdout, opts.Query, opts.Owner, res)
 		return exitOK
 	}
-	if !env.IsTTY {
+	if !env.IsTTY || env.Host.ID != "" {
 		cli.WriteFindTip(stdout)
 		return exitOK
 	}

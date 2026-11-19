@@ -85,15 +85,20 @@ func runAdd(opts app.AddOptions, stdout, stderr io.Writer) (code int) {
 			}
 		}()
 	}
+	env, err := projectEnv()
+	if err != nil {
+		document = cli.JSONFailure(err)
+		return reportError(stderr, err)
+	}
+	// Host-agent mode makes the run non-interactive, so --json is valid without -y here.
+	opts = app.ApplyHost(opts, env)
 	if err := cli.ValidateJSON(opts); err != nil {
 		document = cli.JSONFailure(err)
 		fmt.Fprintf(stderr, "error: %s\n", cli.Message(err))
 		return exitFailure
 	}
-	env, err := projectEnv()
-	if err != nil {
-		document = cli.JSONFailure(err)
-		return reportError(stderr, err)
+	if env.Host.ID != "" {
+		fmt.Fprintf(stderr, "%s Agent detected — installing non-interactively\n", env.Host.Name)
 	}
 	interactive := env.IsTTY
 	var prompter app.Prompter = app.NoPrompts{}
@@ -337,18 +342,22 @@ func runRemove(opts app.RemoveOptions, stderr io.Writer) int {
 	return exitOK
 }
 
-// projectEnv builds the use-case environment from the process.
+// projectEnv builds the use-case environment from the process. Host detection runs once here, from
+// the same environment the paths and agent detection use.
 func projectEnv() (app.Env, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return app.Env{}, err
 	}
+	agentEnv := agents.FromOS(workDir)
+	host, _ := agents.DetectHost(agentEnv)
 	return app.Env{
 		WorkDir:         workDir,
 		IsTTY:           canPrompt(),
 		IncludeInternal: internalSkillsEnabled(),
 		Now:             time.Now,
-		AgentEnv:        agents.FromOS(workDir),
+		AgentEnv:        agentEnv,
+		Host:            host,
 	}, nil
 }
 

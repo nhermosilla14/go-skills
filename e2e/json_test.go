@@ -179,6 +179,7 @@ func runWithStdin(t *testing.T, dir string, stdin *os.File, args ...string) resu
 	t.Helper()
 	cmd := exec.Command(skillsBin, args...)
 	cmd.Dir = dir
+	cmd.Env = withoutHost(os.Environ())
 	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

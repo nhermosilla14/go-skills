@@ -69,6 +69,11 @@ type UpdateReport struct {
 	Notes           []string
 	NothingToUpdate bool
 	LockPath        string // set when the lock file was written
+
+	// Phases holds one report per executed scope when a run updates both. The fields above
+	// aggregate the phases so Failed, Changed and the exit code see the whole run; the CLI prints
+	// each phase under its own header.
+	Phases []UpdateReport
 }
 
 // Failed reports whether a source or a skill failed, which makes the command exit non-zero.
@@ -110,26 +115,60 @@ func (r UpdateReport) Skipped() bool {
 	return false
 }
 
-// Update refreshes the installed skills of the selected scope from their recorded sources. The
-// project lock and the global lock never mix: each run reads and writes only its own.
+// Update refreshes the installed skills of the selected scopes from their recorded sources. The
+// project lock and the global lock never mix: each phase reads and writes only its own.
 func Update(opts UpdateOptions, env Env, prompters ...Prompter) (UpdateReport, error) {
 	var prompter Prompter
 	if len(prompters) > 0 {
 		prompter = prompters[0]
 	}
-	rep := UpdateReport{}
-	if err := chooseUpdateScope(opts, env, prompter, &rep); err != nil {
-		return rep, err
+	scopes, err := chooseUpdateScopes(opts, env, prompter)
+	if err != nil {
+		return UpdateReport{}, err
 	}
-	if rep.NothingToUpdate {
-		return rep, nil
+	unmatched := unmatchedUpdateNames(opts.Skills, scopes, env)
+	if len(scopes) == 1 {
+		return updateScope(opts, env, scopes[0], unmatched)
 	}
+	rep := UpdateReport{Scope: string(ScopeBoth), NothingToUpdate: true}
+	for i, scope := range scopes {
+		// A name that matches neither lock is reported once, by the last phase.
+		report := []string{}
+		if i == len(scopes)-1 {
+			report = unmatched
+		}
+		phase, err := updateScope(opts, env, scope, report)
+		if err != nil {
+			return rep, err
+		}
+		rep.Phases = append(rep.Phases, phase)
+		rep.merge(phase)
+	}
+	return rep, nil
+}
+
+// merge folds one phase of a both-scope run into the aggregate report the exit code reads.
+func (r *UpdateReport) merge(phase UpdateReport) {
+	r.Checks = append(r.Checks, phase.Checks...)
+	r.Results = append(r.Results, phase.Results...)
+	r.Uncheckable = append(r.Uncheckable, phase.Uncheckable...)
+	if phase.LockPath != "" {
+		r.LockPath = phase.LockPath
+	}
+	r.NothingToUpdate = r.NothingToUpdate && phase.NothingToUpdate
+}
+
+// updateScope runs one phase of a run. unmatched holds the requested names this phase reports as
+// matching nothing, resolved once for the whole run.
+func updateScope(opts UpdateOptions, env Env, scope Scope, unmatched []string) (UpdateReport, error) {
+	rep := UpdateReport{Scope: string(scope)}
 	agentEnv := env.agentsEnv()
-	lock, err := openUpdateLock(env, agentEnv, rep.Scope == string(ScopeGlobal))
+	lock, err := openUpdateLock(env, agentEnv, scope == ScopeGlobal)
 	if err != nil {
 		return rep, err
 	}
-	tasks, groups := planUpdates(lock, opts.Skills, &rep)
+	selected, _ := selectUpdateKeys(lock, opts.Skills)
+	tasks, groups := planUpdates(lock, selected, unmatched, &rep)
 	if len(tasks) == 0 && len(rep.Results) == 0 && len(rep.Uncheckable) == 0 {
 		rep.NothingToUpdate = true
 		rep.Notes = append(rep.Notes, nothingToUpdateNotes(lock.global())...)
@@ -160,51 +199,76 @@ func Update(opts UpdateOptions, env Env, prompters ...Prompter) (UpdateReport, e
 	return rep, nil
 }
 
-// chooseUpdateScope resolves the scope: -g or -p wins, names without a flag stay in the project,
-// and an interactive answer may pick global. Updating both scopes is not supported yet.
-func chooseUpdateScope(opts UpdateOptions, env Env, prompter Prompter, rep *UpdateReport) error {
-	if opts.Global && opts.Project {
-		return fmt.Errorf("%w: cannot combine --global with --project", ErrUsage)
-	}
-	rep.Scope = string(ScopeProject)
-	if opts.Global {
-		rep.Scope = string(ScopeGlobal)
-		return nil
-	}
+// chooseUpdateScopes resolves the scopes of the run: -g and -p select their own phases, names
+// without a flag update both (global first, then project, as upstream does), and a run without
+// names follows upstream's non-interactive default or asks on a terminal.
+func chooseUpdateScopes(opts UpdateOptions, env Env, prompter Prompter) ([]Scope, error) {
 	switch {
+	case opts.Global && opts.Project:
+		return []Scope{ScopeGlobal, ScopeProject}, nil
+	case opts.Global:
+		return []Scope{ScopeGlobal}, nil
 	case opts.Project:
-		return nil
+		return []Scope{ScopeProject}, nil
 	case len(opts.Skills) > 0:
-		return nil
+		return []Scope{ScopeGlobal, ScopeProject}, nil
 	case opts.Yes || !env.IsTTY:
-		if !hasProjectSkills(env) {
-			rep.NothingToUpdate = true
-			rep.Notes = append(rep.Notes, nothingToUpdateNotes(false)...)
+		if hasProjectSkills(env) {
+			return []Scope{ScopeProject}, nil
 		}
-		return nil
+		return []Scope{ScopeGlobal}, nil
 	}
 	if prompter == nil {
-		return promptRequired(true)
+		return nil, promptRequired(true)
 	}
 	answers, err := prompter.Ask(Questions{
 		Steps:    []StepID{StepUpdateScope},
 		Defaults: Answers{Scope: ScopeProject},
 	})
 	if errors.Is(err, ErrPromptRequired) {
-		return promptRequired(true)
+		return nil, promptRequired(true)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	switch answers.Scope {
 	case ScopeProject:
-		return nil
+		return []Scope{ScopeProject}, nil
 	case ScopeGlobal:
-		rep.Scope = string(ScopeGlobal)
-		return nil
+		return []Scope{ScopeGlobal}, nil
+	case ScopeBoth:
+		return []Scope{ScopeGlobal, ScopeProject}, nil
 	default:
-		return fmt.Errorf("%w: updating both scopes is not supported yet", ErrUsage)
+		return nil, fmt.Errorf("%w: unknown update scope %q", ErrUsage, answers.Scope)
 	}
+}
+
+// unmatchedUpdateNames reports the requested names that no lock of the run tracks. Resolving them
+// before the phases lets a both-scope run report each name once, and only when both locks miss it.
+func unmatchedUpdateNames(names []string, scopes []Scope, env Env) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	agentEnv := env.agentsEnv()
+	matched := make(map[string]bool, len(names))
+	for _, scope := range scopes {
+		lock, err := openUpdateLock(env, agentEnv, scope == ScopeGlobal)
+		if err != nil {
+			continue // the phase reports the broken lock itself
+		}
+		for _, name := range names {
+			if len(matchUpdateKeys(lock, name)) > 0 {
+				matched[name] = true
+			}
+		}
+	}
+	var out []string
+	for _, name := range names {
+		if !matched[name] {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // nothingToUpdateNotes is what a run with no tracked skills reports.
@@ -371,10 +435,10 @@ type updateGroup struct {
 	err    string
 }
 
-// planUpdates classifies the lock entries: uncheckable ones are reported, the rest are grouped by
-// sourceUrl or source plus ref, in lock key order.
-func planUpdates(lock updateLock, names []string, rep *UpdateReport) ([]updateTask, []*updateGroup) {
-	selected, unmatched := selectUpdateKeys(lock, names)
+// planUpdates classifies the lock entries: the names that match nothing are reported, the rest are
+// grouped by sourceUrl or source plus ref, in lock key order.
+func planUpdates(lock updateLock, selected map[string]bool, unmatched []string,
+	rep *UpdateReport) ([]updateTask, []*updateGroup) {
 	for _, name := range unmatched {
 		rep.Results = append(rep.Results, UpdateResult{
 			Name: name, Status: UpdateFailed, Reason: "no installed skill matches this name",
@@ -384,7 +448,7 @@ func planUpdates(lock updateLock, names []string, rep *UpdateReport) ([]updateTa
 	var tasks []updateTask
 	var groups []*updateGroup
 	for _, key := range lock.keys() {
-		if len(names) > 0 && !selected[key] {
+		if selected != nil && !selected[key] {
 			continue
 		}
 		entry, _ := lock.entry(key)

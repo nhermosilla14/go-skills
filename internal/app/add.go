@@ -50,6 +50,7 @@ type Env struct {
 	IncludeInternal bool   // install skills marked metadata.internal
 	Now             func() time.Time
 	AgentEnv        agents.Environment // home, OS and variables used by detection and paths
+	Host            agents.Host        // coding agent running the CLI; detected once at start
 }
 
 // Report is the outcome of an add run, for the CLI to render.
@@ -84,6 +85,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if len(prompters) > 0 {
 		prompter = prompters[0]
 	}
+	opts = ApplyHost(opts, env)
 	agentEnv := env.agentsEnv()
 	if err := validateSubagentFlags(opts, agentEnv); err != nil {
 		return Report{}, err
@@ -428,6 +430,21 @@ func requestedSkills(names []string, selector string) []string {
 		out = append(out, selector)
 	}
 	return out
+}
+
+// ApplyHost is the host-agent mode of an add, documented by the ADR: the run never prompts and,
+// when no --agent was given, targets the agent the host maps to plus the universal agents that
+// read the canonical directory. --agent (and --all) always win. It is idempotent, so the CLI can
+// call it before validating --json and the use case then sees the same options.
+func ApplyHost(opts AddOptions, env Env) AddOptions {
+	if env.Host.ID == "" {
+		return opts
+	}
+	opts.Yes = true
+	if len(opts.Agents) == 0 {
+		opts.Agents = agentIDs(agents.HostTargets(env.Host.ID))
+	}
+	return opts
 }
 
 // selectAgents resolves the requested agent identifiers. No identifiers uses detection when

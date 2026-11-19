@@ -55,12 +55,17 @@ Add options:
   -g, --global             Install into the user home instead of the project
       --all                Every skill for every agent, without prompting
       --copy               Copy skills instead of linking them
-      --json               Print one JSON array on stdout; requires -y or --all
+      --json               Print one JSON array on stdout; requires -y or --all,
+                           or a detected host agent
       --subagent <name...> Eve targets: root, . or a subagent name; implies Eve
       --rename <name>      Install one selected skill under a new name
       --full-depth         Search all subdirectories, even under a root SKILL.md
   -l, --list               List the skills in the source and exit
   -h, --help               Show this help
+
+Add runs non-interactively when it detects the host agent it runs inside
+(Claude Code, Codex, OpenCode, Gemini CLI and others) and, without --agent,
+installs for that agent plus the universal agents.
 
 List options:
   -a, --agent <agent...>   Only these agents (default: all). Use '*' for all.
@@ -105,6 +110,10 @@ Update options:
   -g, --global             Update the global scope
   -y, --yes                Update without prompting
   -h, --help               Show this help
+
+  Naming skills without -p or -g updates the global scope and then the project
+  scope; without names and without a terminal it updates the project when it has
+  skills, the global scope otherwise.
 
 Remove options:
   remove [skill...] [source]  Remove by name, or every skill tracked from an exact source

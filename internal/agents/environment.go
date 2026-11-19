@@ -27,13 +27,15 @@ type Environment struct {
 // FromOS reads the current process environment. Vars holds only the variables the registry and the
 // CI checks read.
 func FromOS(cwd string) Environment {
-	vars := map[string]string{}
-	for _, name := range []string{
+	names := []string{
 		"XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPDATA", "FLATPAK_XDG_CONFIG_HOME", "HOME", "USERPROFILE",
 		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "HERMES_HOME", "AUTOHAND_HOME",
 		"GROK_HOME", "SARVAM_HOME", "REASONIX_HOME",
 		"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TRAVIS", "TF_BUILD", "JENKINS_URL",
-	} {
+	}
+	names = append(names, HostVariables()...)
+	vars := map[string]string{}
+	for _, name := range names {
 		if v, ok := os.LookupEnv(name); ok {
 			vars[name] = v
 		}

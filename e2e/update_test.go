@@ -224,13 +224,69 @@ func TestE2EUpdateScopeAndNames(t *testing.T) {
 	if res.exit != 1 || !strings.Contains(res.stderr, "no installed skill matches this name") {
 		t.Fatalf("unmatched update exit = %d, stderr:\n%s", res.exit, res.stderr)
 	}
-	if strings.Contains(res.stderr, "global scope is not supported yet") {
-		t.Errorf("named update still claims a global limitation:\n%s", res.stderr)
+	if strings.Count(res.stderr, "Failed to update does-not-exist") != 1 {
+		t.Errorf("the unmatched name is not reported once across the two scopes:\n%s", res.stderr)
 	}
 
 	empty := t.TempDir()
 	res = run(t, empty, "update")
-	if res.exit != 0 || !strings.Contains(res.stderr, "No project skills to update.") {
+	if res.exit != 0 || !strings.Contains(res.stderr, "No global skills tracked in lock file.") {
 		t.Fatalf("empty update exit = %d, stderr:\n%s", res.exit, res.stderr)
+	}
+}
+
+// TestE2EUpdateBothScopes updates a global and a project install in one command, with the two
+// headers, then fails when one of the two phases cannot reach its source.
+func TestE2EUpdateBothScopes(t *testing.T) {
+	fx := newUpdateFixture(t)
+	project := t.TempDir()
+	home := t.TempDir()
+
+	res := runGlobal(t, project, home, "add", fx.url+"#v1", "-a", "opencode", "-g", "-y")
+	if res.exit != 0 {
+		t.Fatalf("global add exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	res = run(t, project, "add", fx.url+"#v1", "-a", "opencode", "-y")
+	if res.exit != 0 {
+		t.Fatalf("project add exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	runGit(t, fx.bare, "tag", "-f", "v1", fx.second)
+
+	res = runGlobal(t, project, home, "update", "alpha")
+	if res.exit != 0 {
+		t.Fatalf("both-scope update exit = %d\nstderr:\n%s", res.exit, res.stderr)
+	}
+	for _, want := range []string{"Global Skills", "Project Skills"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr misses the %q header:\n%s", want, res.stderr)
+		}
+	}
+	if strings.Index(res.stderr, "Global Skills") > strings.Index(res.stderr, "Project Skills") {
+		t.Errorf("the project phase ran before the global one:\n%s", res.stderr)
+	}
+	for _, dir := range []string{
+		filepath.Join(home, ".agents", "skills", "alpha"),
+		filepath.Join(project, ".agents", "skills", "alpha"),
+	} {
+		raw, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("%s missing: %v", dir, err)
+		}
+		if !strings.Contains(string(raw), "version two") {
+			t.Errorf("%s = %q, want the advanced content", dir, raw)
+		}
+	}
+
+	// A name tracked in both scopes is updated in both; an unreachable global source fails the run
+	// while the project phase still updates.
+	if err := os.RemoveAll(fx.bare); err != nil {
+		t.Fatal(err)
+	}
+	res = runGlobal(t, project, home, "update", "alpha")
+	if res.exit != 1 {
+		t.Fatalf("update exit = %d, want 1\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "✗ Failed to check skills from "+fx.url) {
+		t.Errorf("stderr misses the failed global check:\n%s", res.stderr)
 	}
 }

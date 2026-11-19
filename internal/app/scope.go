@@ -93,12 +93,14 @@ func agentNames(list []agents.Agent) string {
 }
 
 // globalAgentDir is the directory an agent reads global skills from: the canonical directory for
-// the universal agents that read it, and the agent's own directory otherwise.
+// the universal agents that read it, and the agent's own directory otherwise. It is the global view
+// of Agent.BaseDir, the one resolver every command uses, and it stays empty for project-only
+// agents, which a global run rejects instead of guessing a path under home.
 func globalAgentDir(a agents.Agent, env agents.Environment) string {
-	if a.ReadsCanonicalGlobally {
-		return agents.CanonicalSkillsDir(env, true)
+	if a.GlobalSkillsDir(env) == "" && !a.ReadsCanonicalGlobally {
+		return ""
 	}
-	return a.GlobalSkillsDir(env)
+	return a.BaseDir(env, true)
 }
 
 // scopeCanonicalDir is the canonical skills directory of the scope.

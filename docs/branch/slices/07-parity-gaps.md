@@ -1,5 +1,7 @@
 # Remaining parity gaps
 
+- Status: Done
+
 - Intents: 20261119-parity-gaps
 - ADRs: 20261119-subagents-and-host-detection, 20261119-upstream-defect-corrections
 

@@ -8,10 +8,32 @@ import (
 )
 
 // WriteUpdate prints the update run: the header, one line per source check, one line per skill
-// that changed or was left alone, the entries that cannot be checked, and the summary. Progress
-// and results belong on the human stream.
+// that changed or was left alone, the entries that cannot be checked, and the summary. A run that
+// updates both scopes prints one section per scope under its own header.
 func WriteUpdate(w io.Writer, rep app.UpdateReport) {
 	fmt.Fprintln(w, "Checking for skill updates…")
+	if len(rep.Phases) > 0 {
+		for _, phase := range rep.Phases {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, scopeHeader(phase.Scope))
+			fmt.Fprintln(w)
+			writeUpdatePhase(w, phase)
+		}
+		return
+	}
+	writeUpdatePhase(w, rep)
+}
+
+// scopeHeader is the section title of one phase of a both-scope run.
+func scopeHeader(scope string) string {
+	if scope == string(app.ScopeGlobal) {
+		return "Global Skills"
+	}
+	return "Project Skills"
+}
+
+// writeUpdatePhase prints the checks, results, notes and summary of one scope.
+func writeUpdatePhase(w io.Writer, rep app.UpdateReport) {
 	for _, check := range rep.Checks {
 		if check.Err != "" {
 			fmt.Fprintf(w, "✗ Failed to check skills from %s\n", displayText(check.Source))

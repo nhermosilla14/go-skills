@@ -135,7 +135,7 @@ func (f *flow) newStep(step app.StepID) stepModel {
 		return newChoice(f.theme, step, "Update scope", []option{
 			{label: "Project", detail: "Update skills installed in this project"},
 			{label: "Global", detail: "Update skills installed in your home directory"},
-			{label: "Both", detail: "Not supported yet"},
+			{label: "Both", detail: "Update both, global skills first"},
 		})
 	case app.StepMethod:
 		return newChoice(f.theme, step, "Installation method", []option{

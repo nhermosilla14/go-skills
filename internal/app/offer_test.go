@@ -77,6 +77,9 @@ func TestFindSkillsOfferAcceptedInstallsGlobally(t *testing.T) {
 	if rep.Offer == nil || !rep.Offer.Accepted || rep.Offer.Declined {
 		t.Fatalf("offer = %+v, want an accepted offer", rep.Offer)
 	}
+	if !rep.Offer.Dismissed {
+		t.Errorf("offer = %+v, want the dismissal recorded on accept", rep.Offer)
+	}
 	if len(rep.Offer.Warnings) != 0 {
 		t.Errorf("warnings = %v, want none", rep.Offer.Warnings)
 	}
@@ -90,6 +93,20 @@ func TestFindSkillsOfferAcceptedInstallsGlobally(t *testing.T) {
 	}
 	if _, ok := lock.Get("find-skills"); !ok {
 		t.Errorf("global lock tracks %v, want find-skills", lock.Skills)
+	}
+	if !lock.DismissedPrompt(FindSkillsPrompt) {
+		t.Errorf("dismissed = %v, want findSkillsPrompt", lock.Dismissed)
+	}
+
+	// The accepted offer is asked once: the next interactive install does not suggest it again.
+	second := &OfferScripted{Accept: true}
+	rep, err = Add(AddOptions{Source: src, Agents: []string{"opencode"}, Skills: []string{"alpha"}},
+		env, &scriptedOffer{Scripted: NewScripted(t, offerAnswers()), OfferScripted: second})
+	if err != nil {
+		t.Fatalf("second Add: %v", err)
+	}
+	if rep.Offer != nil || second.Asked() != 0 {
+		t.Errorf("offer = %+v, asked = %d, want none after the dismissal", rep.Offer, second.Asked())
 	}
 }
 
