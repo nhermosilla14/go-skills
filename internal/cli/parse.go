@@ -18,6 +18,7 @@ const (
 	KindRemove
 	KindUpdate
 	KindRestore
+	KindUse
 )
 
 // Command is a parsed command line.
@@ -29,7 +30,18 @@ type Command struct {
 	Remove  app.RemoveOptions  // set when Kind is KindRemove
 	Update  app.UpdateOptions  // set when Kind is KindUpdate
 	Restore app.RestoreOptions // set when Kind is KindRestore
+	Use     UseOptions         // set when Kind is KindUse
+	UseHelp bool               // use asked for its own help
 	JSON    bool               // --json, for list
+}
+
+// UseOptions is the parsed `use` command line before validation. Skills and Agents keep every
+// value; the CLI rejects more than one of either.
+type UseOptions struct {
+	Source    string
+	Skills    []string
+	Agents    []string
+	FullDepth bool
 }
 
 // addNames are the spellings of the add command. install and i are add with a source.
@@ -59,6 +71,8 @@ func Parse(args []string) (Command, error) {
 		return parseUpdate(args[1:])
 	case name == "remove" || name == "rm" || name == "r":
 		return parseRemove(args[1:])
+	case name == "use":
+		return parseUse(args[1:])
 	case strings.HasPrefix(name, "-"):
 		return Command{}, usagef("unknown option '%s'", name)
 	default:
@@ -755,6 +769,120 @@ func (p *removeParser) short(args []string, i int) (int, error) {
 }
 
 func (p *removeParser) repeatable(args []string, i int, name, inline string, hasInline bool) (int, error) {
+	values, last := collectValues(args, i, inline, hasInline)
+	if len(values) == 0 || (hasInline && inline == "") {
+		noun := "an agent name"
+		if name == "skill" {
+			noun = "a skill name"
+		}
+		return i, usagef("--%s requires %s", name, noun)
+	}
+	if name == "agent" {
+		p.opts.Agents = append(p.opts.Agents, values...)
+	} else {
+		p.opts.Skills = append(p.opts.Skills, values...)
+	}
+	return last, nil
+}
+
+// useParser accumulates the options of use.
+type useParser struct {
+	opts      UseOptions
+	hasSource bool
+	help      bool
+}
+
+// parseUse parses `use <source>[@skill]`: repeated --skill and --agent values (validated later),
+// --full-depth, and its own help. A missing source is not a parse error: the caller reports it
+// with the use help.
+func parseUse(args []string) (Command, error) {
+	if len(args) == 1 && args[0] == "help" {
+		return Command{Kind: KindUse, UseHelp: true}, nil
+	}
+	p := &useParser{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var err error
+		switch {
+		case arg == "--":
+			for _, rest := range args[i+1:] {
+				if err = p.source(rest); err != nil {
+					break
+				}
+			}
+			i = len(args)
+		case strings.HasPrefix(arg, "--"):
+			i, err = p.long(args, i)
+		case strings.HasPrefix(arg, "-") && arg != "-":
+			i, err = p.short(args, i)
+		default:
+			err = p.source(arg)
+		}
+		if err != nil {
+			return Command{}, err
+		}
+	}
+	if p.help {
+		return Command{Kind: KindUse, UseHelp: true}, nil
+	}
+	return Command{Kind: KindUse, Use: p.opts}, nil
+}
+
+func (p *useParser) source(arg string) error {
+	if p.hasSource {
+		return usagef("unexpected argument '%s': only one source is allowed", arg)
+	}
+	p.hasSource = true
+	p.opts.Source = arg
+	return nil
+}
+
+func (p *useParser) long(args []string, i int) (int, error) {
+	name, value, hasValue := strings.Cut(args[i][2:], "=")
+	switch name {
+	case "agent", "skill":
+		return p.repeatable(args, i, name, value, hasValue)
+	case "full-depth", "help":
+		if hasValue {
+			return i, usagef("--%s does not take a value", name)
+		}
+		if name == "help" {
+			p.help = true
+		} else {
+			p.opts.FullDepth = true
+		}
+		return i, nil
+	}
+	return i, usagef("unknown option '--%s'", name)
+}
+
+func (p *useParser) short(args []string, i int) (int, error) {
+	group, value, hasValue := strings.Cut(args[i][1:], "=")
+	for k := 0; k < len(group); k++ {
+		letter := group[k]
+		switch letter {
+		case 'a', 's':
+			if k != len(group)-1 {
+				return i, usagef("-%c takes a value and must be last in its group", letter)
+			}
+			name := "agent"
+			if letter == 's' {
+				name = "skill"
+			}
+			return p.repeatable(args, i, name, value, hasValue)
+		case 'h':
+			if hasValue && k == len(group)-1 {
+				return i, usagef("-%c does not take a value", letter)
+			}
+			p.help = true
+		default:
+			return i, usagef("unknown option '-%c'", letter)
+		}
+	}
+	return i, nil
+}
+
+func (p *useParser) repeatable(args []string, i int, name, inline string, hasInline bool) (int, error) {
 	values, last := collectValues(args, i, inline, hasInline)
 	if len(values) == 0 || (hasInline && inline == "") {
 		noun := "an agent name"

@@ -79,6 +79,9 @@ Current, working subset:
 
 # Rebuild a clean checkout from the lock.
 ./skills install
+
+# Hand one skill to an agent without installing it.
+./skills use vercel-labs/agent-skills@web-design-guidelines | claude
 ./skills add ./path/to/skills --list
 ./skills add ./path/to/skills --skill "Web Design" --rename web-design -y
 ./skills add ./path/to/skills --all
@@ -100,7 +103,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Project and global |
 | `update` | Re-resolve tracked skills to newer revisions, preserving mode and rename. | Project and global |
 | `check` | Report whether tracked skills are outdated without changing anything. | Project and global |
-| `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | `TODO` |
+| `use` | Generate a prompt for one skill on stdout, or launch an agent with it. | Delivered |
 | `find` | Search skill catalogs. | `TODO` |
 | `init` | Create a new `SKILL.md` skeleton. | `TODO` |
 | `install` | With a source, same as `add`; without one, restore project skills from `skills-lock.json` at their pinned commits. | Project restore |

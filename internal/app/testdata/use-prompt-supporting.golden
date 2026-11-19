@@ -1,0 +1,18 @@
+You are being given a Skill to execute for the user's next request.
+
+Use the following SKILL.md as your instructions:
+
+<SKILL.md>
+---
+name: demo
+description: demo skill
+---
+
+Body.
+
+</SKILL.md>
+
+Supporting files for this skill were downloaded to:
+/tmp/skills-use-demo/demo
+
+When the SKILL.md references relative paths, read them from that directory.

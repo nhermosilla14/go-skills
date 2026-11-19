@@ -63,6 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runUpdate(cmd.Update, stderr)
 	case cli.KindRestore:
 		return runRestore(cmd.Restore, stderr)
+	case cli.KindUse:
+		return runUse(cmd, stdout, stderr)
 	default:
 		return runAdd(cmd.Add, stdout, stderr)
 	}
@@ -228,6 +230,59 @@ func runRestore(opts app.RestoreOptions, stderr io.Writer) int {
 	cli.WriteRestore(stderr, rep)
 	if rep.Failed() {
 		return exitFailure
+	}
+	return exitOK
+}
+
+// runUse runs `use`: it prints the prompt on stdout, or hands it to an agent and propagates the
+// agent's exit code. Validation failures go to stderr with exit 1.
+func runUse(cmd cli.Command, stdout, stderr io.Writer) int {
+	if cmd.UseHelp {
+		fmt.Fprint(stdout, cli.UseHelp())
+		return exitOK
+	}
+	if errs := cli.ValidateUse(cmd.Use); len(errs) > 0 {
+		for _, msg := range errs {
+			fmt.Fprintf(stderr, "error: %s\n", msg)
+		}
+		if cmd.Use.Source == "" {
+			fmt.Fprint(stderr, cli.UseHelp())
+		}
+		return exitFailure
+	}
+	env, err := projectEnv()
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	opts := app.UseOptions{Source: cmd.Use.Source, FullDepth: cmd.Use.FullDepth}
+	if len(cmd.Use.Skills) == 1 {
+		opts.Skill = cmd.Use.Skills[0]
+	}
+	if len(cmd.Use.Agents) == 0 {
+		if _, err := app.Use(opts, env, stdout); err != nil {
+			return reportError(stderr, err)
+		}
+		return exitOK
+	}
+	agent, ok := cli.ResolveUseAgent(cmd.Use.Agents[0])
+	if !ok {
+		return reportError(stderr, fmt.Errorf("unknown agent %q", cmd.Use.Agents[0]))
+	}
+	rep, err := app.Use(opts, env, io.Discard)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	code, err := cli.LaunchAgent(agent, rep.Prompt, os.Stdin, os.Stdout, os.Stderr)
+	if err != nil {
+		var launch *cli.LaunchError
+		if errors.As(err, &launch) {
+			fmt.Fprintln(stderr, launch.Error())
+			return exitFailure
+		}
+		return reportError(stderr, err)
+	}
+	if code != 0 {
+		return code
 	}
 	return exitOK
 }

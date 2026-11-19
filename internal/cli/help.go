@@ -15,6 +15,8 @@ Commands:
   add <source>      Install the skills found in a source
   install [source]  With a source, same as add; without one, restore from
                     skills-lock.json (alias: i)
+  use <source>[@skill]
+                    Use one skill without installing it
   experimental_install
                     Restore skills from skills-lock.json
   list, ls          List installed skills and their lock status
@@ -61,6 +63,13 @@ List options:
   -a, --agent <agent...>   Only these agents (default: all). Use '*' for all.
   -g, --global             List global skills and the global lock
       --json               Print one JSON array on stdout
+  -h, --help               Show this help
+
+Use options:
+  -s, --skill <name>       Select the skill to use; only one value is allowed
+  -a, --agent <agent>      Launch the agent with the prompt: claude-code, codex
+                           or sarvam-code
+      --full-depth         Search all subdirectories, even under a root SKILL.md
   -h, --help               Show this help
 
 Restore options:

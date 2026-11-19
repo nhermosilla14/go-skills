@@ -1,5 +1,7 @@
 # Use a skill
 
+- Status: Done
+
 - Intents: 20261119-use-and-init
 - ADRs: 20261119-use-prompt-and-launch
 
