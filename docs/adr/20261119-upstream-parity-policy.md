@@ -1,7 +1,8 @@
 # Upstream parity policy
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-19
+- Approved by: Nicolás Hermosilla P.
 - Deciders: Nicolás Hermosilla P.
 
 ## Context

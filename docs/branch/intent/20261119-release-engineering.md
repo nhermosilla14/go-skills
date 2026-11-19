@@ -3,8 +3,9 @@
 Work order in `docs/branch/intent/20261119-release-engineering.md`. Folded into `docs/spec/` and
 deleted when the branch is finalized.
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-19
+- Approved by: Nicolás Hermosilla P.
 - Owner: Nicolás Hermosilla P.
 
 ## Goal

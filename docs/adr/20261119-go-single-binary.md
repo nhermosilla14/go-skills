@@ -1,7 +1,8 @@
 # Go single-binary implementation
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-19
+- Approved by: Nicolás Hermosilla P.
 - Deciders: Nicolás Hermosilla P.
 
 ## Context
@@ -12,9 +13,8 @@ to reproduce is documented in `olddocs/`; its source code is not being carried o
 
 ## Decision
 
-Implement the tool in Go (module `github.com/nhermesilla14/go-skills`, corrected to
-`github.com/nhermosilla14/go-skills` in the module file) as a single statically linked binary named
-`skills`, built from `cmd/skills`.
+Implement the tool in Go as a single statically linked binary named `skills`, from module
+`github.com/nhermosilla14/go-skills`, built from `cmd/skills`.
 
 Dependency policy:
 
