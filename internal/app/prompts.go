@@ -54,6 +54,8 @@ const (
 	StepRemoveConfirm StepID = "remove-confirm"
 	// StepFindSkillsOffer is the one-time suggestion to install find-skills after an install.
 	StepFindSkillsOffer StepID = "find-skills-offer"
+	// StepNotionPacks is the Notion pack multi-select that runs before the add flow.
+	StepNotionPacks StepID = "notion-packs"
 )
 
 // Answers are the decisions of one interactive run. Every field is plain data so the use case

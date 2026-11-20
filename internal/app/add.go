@@ -107,8 +107,15 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		defer os.RemoveAll(tmp)
 	}
 	ctx := context.Background()
+	var notionExports []notionExport
+	if src.Kind == source.KindNotion {
+		src, notionExports, err = prepareNotionPacks(ctx, opts, prompter, tmp)
+		if err != nil {
+			return Report{}, err
+		}
+	}
 	var wellKnown *source.WellKnown
-	if src.Kind == source.KindDownload {
+	if src.Kind == source.KindDownload && !src.IsNotion() && len(notionExports) == 0 {
 		wellKnown, err = source.ProbeWellKnown(ctx, src.Source, false)
 		if err != nil {
 			return Report{}, err
@@ -119,13 +126,23 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if wellKnown != nil {
 		found = skill.Result{Skills: wellKnown.List()}
 	} else {
-		tree, err = source.Acquire(ctx, src, tmp)
-		if err != nil {
-			return Report{}, err
+		// A bare `notion` run has already exported its packs into the temporary directory.
+		if len(notionExports) > 0 {
+			tree = source.Tree{Dir: tmp}
+		} else {
+			tree, err = source.Acquire(ctx, src, tmp)
+			if err != nil {
+				return Report{}, err
+			}
 		}
 		found, err = discover(tree.Dir, src, env.IncludeInternal, opts.FullDepth)
 		if err != nil {
 			return Report{}, err
+		}
+		if len(notionExports) > 0 {
+			if err := groupNotionPacks(&found, notionExports); err != nil {
+				return Report{}, err
+			}
 		}
 	}
 	display := src.Display()
@@ -218,6 +235,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		commit:     tree.Commit,
 		skillPath:  tree.SkillPath,
 		wellKnown:  tree.WellKnown,
+		packs:      notionExports,
 		entries:    entries,
 		results:    rep.Results,
 		hashes:     rep.Hashes,
@@ -578,6 +596,7 @@ type recordInput struct {
 	commit     string
 	skillPath  string // SKILL.md path the acquisition knows, set by a single-file download
 	wellKnown  *source.WellKnownContent
+	packs      []notionExport // one per pack of a bare `notion` run; empty otherwise
 	entries    []install.Entry
 	results    []install.Result
 	hashes     map[string]string
@@ -586,6 +605,19 @@ type recordInput struct {
 	warnings   *[]string
 	saveAgents bool
 	agents     []string
+}
+
+// sourceOf returns the lock source of one installed skill. A pack run records every skill against
+// its own pack, because each pack is exported and re-exported on its own.
+func (in recordInput) sourceOf(e install.Entry) (source.Source, error) {
+	if len(in.packs) == 0 {
+		return in.source, nil
+	}
+	export, ok := notionExportOf(in.packs, e.Skill.RelDir)
+	if !ok {
+		return source.Source{}, fmt.Errorf("skill %q is outside every exported Notion pack", e.Skill.Name)
+	}
+	return export.source, nil
 }
 
 // recordScope saves the installs in the lock of the scope. It reports whether the file was written.
@@ -614,7 +646,11 @@ func recordInstalled(lock *lockfile.File, lockPath string, in recordInput) (bool
 		if in.hashes != nil {
 			in.hashes[e.Name] = digest
 		}
-		lock.Put(e.Name, lockEntry(in, e, digest))
+		src, err := in.sourceOf(e)
+		if err != nil {
+			return false, err
+		}
+		lock.Put(e.Name, lockEntry(in, src, e, digest))
 		recorded = true
 	}
 	if !recorded {
@@ -636,7 +672,11 @@ func recordGlobal(lock *lockfile.GlobalFile, lockPath string, in recordInput) (b
 		if !ok || failedAny(in.results, e.Name) {
 			continue
 		}
-		entry := globalLockEntry(in, e, lock)
+		src, err := in.sourceOf(e)
+		if err != nil {
+			return false, err
+		}
+		entry := globalLockEntry(in, src, e, lock)
 		digest, warning, err := globalFolderHash(entry, loc)
 		if err != nil {
 			return false, fmt.Errorf("hashing %s: %w", e.Name, err)
@@ -670,14 +710,15 @@ func recordGlobal(lock *lockfile.GlobalFile, lockPath string, in recordInput) (b
 
 // globalLockEntry builds the global record for one installed skill, keeping installedAt from an
 // earlier install of the same name.
-func globalLockEntry(in recordInput, e install.Entry, lock *lockfile.GlobalFile) lockfile.GlobalEntry {
+func globalLockEntry(in recordInput, src source.Source, e install.Entry,
+	lock *lockfile.GlobalFile) lockfile.GlobalEntry {
 	entry := lockfile.GlobalEntry{
-		SourceType:  string(in.source.Kind),
+		SourceType:  string(src.Kind),
 		InstalledAt: timestamp(in.now),
 		UpdatedAt:   timestamp(in.now),
 	}
-	if in.source.Kind == source.KindLocal {
-		entry.Source = filepath.ToSlash(in.source.Source)
+	if src.Kind == source.KindLocal {
+		entry.Source = filepath.ToSlash(src.Source)
 	} else if in.wellKnown != nil {
 		base, digest, _ := wellKnownRecord(in, e)
 		entry.Source = base
@@ -686,15 +727,15 @@ func globalLockEntry(in recordInput, e install.Entry, lock *lockfile.GlobalFile)
 		entry.WellKnownDigest = digest
 		entry.SkillPath = recordedSkillPath(in, e)
 	} else {
-		entry.Source = in.source.Source
-		entry.SourceType = lockSourceType(in.source.Kind)
-		if in.source.SourceURL != "" && in.source.Kind != source.KindGitHub {
-			entry.SourceURL = in.source.SourceURL
+		entry.Source = src.Source
+		entry.SourceType = lockSourceType(src.Kind)
+		if src.SourceURL != "" && src.Kind != source.KindGitHub {
+			entry.SourceURL = src.SourceURL
 		}
-		entry.Ref = in.source.Ref
+		entry.Ref = src.Ref
 		entry.Commit = in.commit
 		entry.SkillPath = recordedSkillPath(in, e)
-		if in.source.Kind == source.KindDownload && !in.source.Recordable() {
+		if src.Kind == source.KindDownload && !src.Recordable() {
 			entry.Source, entry.SourceURL = "", ""
 		}
 	}
@@ -761,9 +802,9 @@ func githubToken() string {
 
 // lockEntry builds the lock record for one installed skill. installedAt keeps the value of an
 // earlier install of the same name.
-func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
+func lockEntry(in recordInput, src source.Source, e install.Entry, digest string) lockfile.Entry {
 	entry := lockfile.Entry{ComputedHash: digest}
-	if in.source.Kind == source.KindLocal {
+	if src.Kind == source.KindLocal {
 		entry.Source = localSource(in.project, in.root)
 		entry.SourceType = string(source.KindLocal)
 	} else if in.wellKnown != nil {
@@ -774,17 +815,17 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 		entry.WellKnownDigest = digest
 		entry.SkillPath = recordedSkillPath(in, e)
 	} else {
-		entry.Source = in.source.Source
-		entry.SourceType = lockSourceType(in.source.Kind)
+		entry.Source = src.Source
+		entry.SourceType = lockSourceType(src.Kind)
 		// Upstream records the fetch URL for generic git and GitLab sources, and omits it for
 		// GitHub, whose shorthand source is enough to re-derive the clone URL.
-		if in.source.SourceURL != "" && in.source.Kind != source.KindGitHub {
-			entry.SourceURL = in.source.SourceURL
+		if src.SourceURL != "" && src.Kind != source.KindGitHub {
+			entry.SourceURL = src.SourceURL
 		}
-		entry.Ref = in.source.Ref
+		entry.Ref = src.Ref
 		entry.Commit = in.commit
 		entry.SkillPath = recordedSkillPath(in, e)
-		if in.source.Kind == source.KindDownload && !in.source.Recordable() {
+		if src.Kind == source.KindDownload && !src.Recordable() {
 			entry.Source, entry.SourceURL = "", ""
 		}
 	}

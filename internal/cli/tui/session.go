@@ -29,6 +29,7 @@ type Session struct {
 	opts      Options
 	used      bool
 	offerUsed bool
+	packsUsed bool
 }
 
 // New returns a session that reads keys from in and renders on out, which must be the human
@@ -96,6 +97,33 @@ func (s *Session) AskFindSkillsOffer() (bool, error) {
 		return false, app.ErrCancelled
 	}
 	return done.accepted, nil
+}
+
+// SelectNotionPacks asks which Notion packs to install, in its own program: the answer decides
+// what the add flow discovers, so it runs before the flow starts. Cancelling returns
+// app.ErrCancelled.
+func (s *Session) SelectNotionPacks(workspace string, packs []app.NotionPackChoice) ([]string, error) {
+	if s.packsUsed {
+		return nil, errors.New("notion pack prompt already finished")
+	}
+	s.packsUsed = true
+	model := newPacksPrompt(newTheme(s.out, s.opts.Color, s.opts.ASCII), workspace, packs)
+	program := tea.NewProgram(model,
+		tea.WithInput(cancelableInput(s.in)),
+		tea.WithOutput(s.out),
+	)
+	final, err := program.Run()
+	if err != nil {
+		return nil, fmt.Errorf("notion pack prompt failed: %w", err)
+	}
+	done, ok := final.(*packsPrompt)
+	if !ok {
+		return nil, errors.New("notion pack prompt returned an unexpected model")
+	}
+	if done.cancelled || !done.done {
+		return nil, app.ErrCancelled
+	}
+	return done.selected(), nil
 }
 
 // cancelableInput wraps the input so the end of the stream becomes ctrl+c. Bubble Tea stops

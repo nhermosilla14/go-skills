@@ -67,12 +67,21 @@ func (ExecRunner) Run(ctx context.Context, cmd Command) (Output, error) {
 // Acquire resolves a source: a local directory is returned as is, a download is materialized into
 // dir, and a git source is checked out into dir, which the caller owns and removes.
 func Acquire(ctx context.Context, src Source, dir string) (Tree, error) {
-	if src.Kind != KindLocal && src.Kind != KindDownload {
+	if src.needsGit() {
 		if _, err := exec.LookPath("git"); err != nil {
 			return Tree{}, errMissingGit
 		}
 	}
 	return AcquireWith(ctx, src, dir, ExecRunner{})
+}
+
+// needsGit reports whether acquiring the source clones a repository.
+func (s Source) needsGit() bool {
+	switch s.Kind {
+	case KindGitHub, KindGitLab, KindAzure, KindGit:
+		return true
+	}
+	return false
 }
 
 // errMissingGit is reported before any clone is attempted.
@@ -95,11 +104,17 @@ func AcquireWith(ctx context.Context, src Source, dir string, runner Runner) (Tr
 		if dir == "" {
 			return Tree{}, errors.New("no temporary directory was provided for the download")
 		}
+		if src.IsNotion() {
+			return acquireNotion(ctx, src, dir)
+		}
 		dl, err := FetchDownload(ctx, src.CloneURL(), dir)
 		if err != nil {
 			return Tree{}, err
 		}
 		return Tree{Dir: dl.Root, SkillPath: dl.SkillPath}, nil
+	}
+	if src.Kind == KindNotion {
+		return Tree{}, errors.New("the Notion pack browser must select packs before acquisition")
 	}
 	if runner == nil {
 		runner = ExecRunner{}

@@ -238,6 +238,54 @@ func (o *offerPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (o *offerPrompt) View() string { return o.confirm.view() }
 
+// packsPrompt runs the Notion pack multi-select as its own program, before the add flow starts:
+// the selected packs decide what the flow discovers.
+type packsPrompt struct {
+	selector  *selector
+	done      bool
+	cancelled bool
+}
+
+func newPacksPrompt(theme theme, workspace string, packs []app.NotionPackChoice) *packsPrompt {
+	title := "Select Notion packs to install"
+	if workspace != "" {
+		title += " in workspace " + workspace
+	}
+	items := make([]item, 0, len(packs))
+	for _, pack := range packs {
+		items = append(items, item{
+			id: pack.ID, title: pack.Name, detail: pack.Description, checked: true,
+		})
+	}
+	return &packsPrompt{
+		selector: newSelector(theme, app.StepNotionPacks, title, items, []section{plainSection(len(items))}),
+	}
+}
+
+func (p *packsPrompt) Init() tea.Cmd { return nil }
+
+func (p *packsPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		p.selector.resize(size.Width, size.Height)
+		return p, nil
+	}
+	result, cmd := p.selector.update(msg)
+	switch result {
+	case stepCancelled:
+		p.cancelled, p.done = true, true
+		return p, tea.Quit
+	case stepFinished:
+		p.done = true
+		return p, tea.Quit
+	}
+	return p, cmd
+}
+
+func (p *packsPrompt) View() string { return p.selector.view() }
+
+// selected returns the checked pack identifiers.
+func (p *packsPrompt) selected() []string { return p.selector.selectedIDs() }
+
 func (c *confirm) view() string {
 	var lines []string
 	for _, line := range c.theme.wrap(c.title, c.width, 3) {

@@ -28,6 +28,9 @@ const (
 	// KindWellKnown is the lock vocabulary of a skill served by a host's well-known index. It is
 	// never produced by Parse: the provider is discovered at fetch time for a download source.
 	KindWellKnown Kind = "well-known"
+	// KindNotion is the bare `notion` argument, which lists the workspace packs and exports the
+	// selected ones. It never reaches the lock: every installed skill records its own pack.
+	KindNotion Kind = "notion"
 )
 
 // Source is a parsed source argument.
@@ -50,6 +53,17 @@ type Source struct {
 	SkillSelector string
 	// Direct reports whether the source names exactly one skill rather than a catalog.
 	Direct bool
+	// NotionPageID is the page a Notion URL names. A page is exported by ntn and then handled as a
+	// download source.
+	NotionPageID string
+	// NotionPackID is the pack a recorded Notion lock URL names. A pack is re-exported by ntn,
+	// because the download URL it hands out expires.
+	NotionPackID string
+}
+
+// IsNotion reports whether the source is fetched through the ntn CLI.
+func (s Source) IsNotion() bool {
+	return s.NotionPageID != "" || s.NotionPackID != ""
 }
 
 // ErrUnsupported is returned for source forms this build does not fetch yet.
@@ -107,6 +121,11 @@ type fragment struct {
 func Parse(arg string) (Source, error) {
 	if arg == "" || strings.TrimSpace(arg) == "" {
 		return Source{}, errors.New("source is empty")
+	}
+	// Notion is recognized before anything else, as upstream does: the bare pack browser and the
+	// page and pack URLs never reach the ordinary URL handling.
+	if src, ok := discoverNotionSource(arg); ok {
+		return src, nil
 	}
 	if p, ok := parseLocal(arg); ok {
 		return Source{Kind: KindLocal, Source: p, SourceURL: p}, nil

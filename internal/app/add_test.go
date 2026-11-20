@@ -476,7 +476,7 @@ func TestLockEntryForRemoteSource(t *testing.T) {
 		},
 		commit: "0123456789abcdef0123456789abcdef01234567",
 	}
-	entry := lockEntry(in, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
+	entry := lockEntry(in, in.source, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
 
 	if entry.Source != "owner/repo" {
 		t.Errorf("source = %q, want owner/repo", entry.Source)
@@ -526,7 +526,7 @@ func TestLockEntryRecordsSourceURLForGenericGit(t *testing.T) {
 		},
 		commit: "0123456789abcdef0123456789abcdef01234567",
 	}
-	entry := lockEntry(in, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
+	entry := lockEntry(in, in.source, install.Entry{Skill: skill.Skill{Name: "x", RelDir: "skills/x"}}, "hash")
 	if entry.SourceType != "git" || entry.SourceURL != "file:///srv/repo" {
 		t.Errorf("sourceType = %q, sourceUrl = %q", entry.SourceType, entry.SourceURL)
 	}

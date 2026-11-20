@@ -100,13 +100,19 @@ type limits struct {
 // behind. The body is sniffed by magic bytes; a single skill becomes <dir>/<name>/SKILL.md and an
 // archive is extracted under the documented limits.
 func FetchDownload(ctx context.Context, rawURL, dir string) (Download, error) {
+	return fetchDownloadLimited(ctx, rawURL, dir, downloadLimits())
+}
+
+// fetchDownloadLimited is FetchDownload with other fallback limits, which the documented variables
+// can still raise. Notion exports use the larger Notion limits.
+func fetchDownloadLimited(ctx context.Context, rawURL, dir string, l limits) (Download, error) {
 	if dir == "" {
 		return Download{}, errors.New("no temporary directory was provided for the download")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Download{}, fmt.Errorf("creating the download directory: %w", err)
 	}
-	dl, err := fetchDownload(ctx, rawURL, dir)
+	dl, err := fetchDownload(ctx, rawURL, dir, l)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return Download{}, err
@@ -115,8 +121,7 @@ func FetchDownload(ctx context.Context, rawURL, dir string) (Download, error) {
 }
 
 // fetchDownload stages the body, sniffs it and materializes it inside dir.
-func fetchDownload(ctx context.Context, rawURL, dir string) (Download, error) {
-	l := downloadLimits()
+func fetchDownload(ctx context.Context, rawURL, dir string, l limits) (Download, error) {
 	body := filepath.Join(dir, bodyFile)
 	contentType, head, err := fetchBody(ctx, rawURL, body, l.downloadBytes)
 	if err != nil {
@@ -223,10 +228,19 @@ func sanitizedURL(raw string) string {
 // downloadLimits reads the documented limits. An environment value only raises a default: a smaller
 // or malformed one is ignored, so the defaults are always a floor.
 func downloadLimits() limits {
+	return downloadLimitsWith(limits{
+		downloadBytes: DownloadMaxBytes,
+		extractBytes:  ExtractMaxBytes,
+		extractFiles:  ExtractMaxFiles,
+	})
+}
+
+// downloadLimitsWith raises the given fallbacks with the documented variables.
+func downloadLimitsWith(fallback limits) limits {
 	return limits{
-		downloadBytes: raisedBytes(envDownloadMaxBytes, DownloadMaxBytes),
-		extractBytes:  raisedBytes(envExtractMaxBytes, ExtractMaxBytes),
-		extractFiles:  raisedCount(envExtractMaxFiles, ExtractMaxFiles),
+		downloadBytes: raisedBytes(envDownloadMaxBytes, fallback.downloadBytes),
+		extractBytes:  raisedBytes(envExtractMaxBytes, fallback.extractBytes),
+		extractFiles:  raisedCount(envExtractMaxFiles, fallback.extractFiles),
 	}
 }
 

@@ -14,13 +14,14 @@ Notion API in Go would duplicate a tool the user already needs to authorize.
 
 ## Decision
 
-- **Detection:** a `notion.so`/`notion.site` page or pack URL selects the Notion path. `ntn` must be
+- **Detection:** a `notion.so`/`notion.com` page URL (host matching `(^|\.)notion\.(so|com)$`) or a
+  bare `notion` argument selects the Notion path; `notion.site` falls through like any other host. `ntn` must be
   on `PATH`; otherwise the command fails with install guidance and exit 1 before any network call.
 - **Fetch:** run `ntn` with the documented export invocation into a temporary directory, then treat
   the result exactly like a download source (discovery, selection, hashing, install).
-- **Lock:** a page is recorded with its page URL as `sourceType: "download"`; a pack is recorded as
-  `notion://packs/<id>` because the export URL from `ntn` expires. `skillPath` points inside the
-  exported tree.
+- **Lock:** a page is recorded with its page URL as `sourceType: "download"`; a pack records
+  `source: "notion"` and `sourceUrl: notion://packs/<id>` because the export URL from `ntn` expires.
+  `skillPath` points inside the exported tree.
 - **Re-fetch:** `update`, `check` and restore re-run the export. An expired, deleted or unauthorized
   page fails with the `ntn` error and leaves the installed copy intact.
 - **Credentials:** owned by `ntn`. The tool never reads its config, never passes tokens and never

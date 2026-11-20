@@ -1,5 +1,7 @@
 # Notion sources
 
+- Status: Done
+
 - Intents: 20261119-notion-sources
 - ADRs: 20261119-notion-through-ntn
 
