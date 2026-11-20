@@ -392,12 +392,10 @@ func planRestore(lock *lockfile.File, rep *RestoreReport) ([]restoreTask, []*res
 // unrestorableReason explains why a lock entry cannot be rebuilt from its source, or returns "".
 func unrestorableReason(e lockfile.Entry) string {
 	switch e.SourceType {
-	case "github", "gitlab", "git", "azure":
+	case "github", "gitlab", "git", "azure", "download":
 		return ""
 	case "local":
 		return "Local paths are not restored from the lock; install them with skills add <source>"
-	case "download":
-		return "Download sources cannot be restored automatically"
 	case "well-known":
 		return "Well-known skills cannot be restored automatically"
 	case "node_modules":

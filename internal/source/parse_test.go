@@ -300,6 +300,33 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "download url",
+			arg:  "https://example.com/skills.zip",
+			want: Source{
+				Kind:      KindDownload,
+				Source:    "https://example.com/skills.zip",
+				SourceURL: "https://example.com/skills.zip",
+			},
+		},
+		{
+			name: "download url keeps its query",
+			arg:  "https://example.com/skill.md?token=abc",
+			want: Source{
+				Kind:      KindDownload,
+				Source:    "https://example.com/skill.md?token=abc",
+				SourceURL: "https://example.com/skill.md?token=abc",
+			},
+		},
+		{
+			name: "download url keeps its userinfo",
+			arg:  "https://user:secret@example.com/skill.md",
+			want: Source{
+				Kind:      KindDownload,
+				Source:    "https://user:secret@example.com/skill.md",
+				SourceURL: "https://user:secret@example.com/skill.md",
+			},
+		},
+		{
 			name: "file url",
 			arg:  "file:///tmp/repo.git#v1",
 			want: Source{Kind: KindGit, Source: "file:///tmp/repo.git", SourceURL: "file:///tmp/repo.git", Ref: "v1"},
@@ -392,7 +419,9 @@ func TestParseRejects(t *testing.T) {
 		{name: "plain word", arg: "skills", want: "not a local directory"},
 		{name: "host with port and no scheme", arg: "localhost:8080/o/r.git", want: "not a local directory"},
 		{name: "npm spec", arg: "npm:foo", want: "not a local directory"},
-		{name: "generic download url", arg: "https://example.com/skills.zip", want: "not a local directory"},
+		{name: "bitbucket is not a download", arg: "https://bitbucket.org/o/r", want: "not a local directory"},
+		{name: "azure project page is not a download", arg: "https://dev.azure.com/org/project", want: "not a local directory"},
+		{name: "tree path is not a download", arg: "https://example.com/o/r/tree/main", want: "not a local directory"},
 		{name: "ext transport", arg: "ext::sh -c evil", want: "ext"},
 	}
 	for _, tc := range tests {
@@ -407,6 +436,10 @@ func TestParseRejects(t *testing.T) {
 		})
 	}
 	if _, err := Parse("https://user:token@github.com/o/r"); err != nil &&
+		strings.Contains(err.Error(), "token") {
+		t.Errorf("error echoes the credential: %v", err)
+	}
+	if _, err := Parse("https://user:token@bitbucket.org/o/r"); err != nil &&
 		strings.Contains(err.Error(), "token") {
 		t.Errorf("error echoes the credential: %v", err)
 	}

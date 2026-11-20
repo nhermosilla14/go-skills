@@ -117,6 +117,8 @@ type lockRef struct {
 	SkillName  string
 	Ref        string
 	Commit     string
+	SkillPath  string
+	Hash       string // content hash of a project entry, folder hash of a global one
 }
 
 // missingSkill is a lock key with no directory on disk.
@@ -374,6 +376,8 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 				SkillName:  entry.SkillName,
 				Ref:        entry.Ref,
 				Commit:     entry.Commit,
+				SkillPath:  entry.SkillPath,
+				Hash:       entry.ComputedHash,
 			}
 		}
 		matched = append(matched, c)
@@ -388,6 +392,7 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 		missing = append(missing, missingSkill{Key: key, Ref: lockRef{
 			Source: entry.Source, SourceURL: entry.SourceURL,
 			SourceType: entry.SourceType, SkillName: entry.SkillName,
+			SkillPath: entry.SkillPath, Hash: entry.ComputedHash,
 		}})
 	}
 	return matched, missing
@@ -449,6 +454,8 @@ func globalRef(entry lockfile.GlobalEntry) lockRef {
 		SkillName:  entry.SkillName,
 		Ref:        entry.Ref,
 		Commit:     entry.Commit,
+		SkillPath:  entry.SkillPath,
+		Hash:       entry.SkillFolderHash,
 	}
 }
 

@@ -239,7 +239,7 @@ func (e GlobalEntry) members() []member {
 			ms = append(ms, member{key, quote(value)})
 		}
 	}
-	add("source", e.Source, true)
+	add("source", e.Source, false)
 	add("sourceType", e.SourceType, true)
 	add("sourceUrl", e.SourceURL, false)
 	add("ref", e.Ref, false)

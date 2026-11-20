@@ -22,6 +22,9 @@ const (
 	KindAzure  Kind = "azure"
 	KindGit    Kind = "git"
 	KindLocal  Kind = "local"
+	// KindDownload is a plain HTTP(S) URL that is not a git repository and serves a SKILL.md or an
+	// archive. The lock records it as "download".
+	KindDownload Kind = "download"
 )
 
 // Source is a parsed source argument.
@@ -32,8 +35,8 @@ type Source struct {
 	// the other git hosts, and the resolved path for a local directory.
 	Source string
 	// SourceURL is the location a git source is fetched from, and is empty only for GitHub
-	// shorthand, whose clone URL derives from Source. It is written to the lock when it differs
-	// from Source.
+	// shorthand, whose clone URL derives from Source. A download keeps its URL in both fields. It
+	// is written to the lock when it differs from Source.
 	SourceURL string
 	// Ref is the branch, tag or full commit SHA to check out; empty means the default branch.
 	Ref string
@@ -49,7 +52,8 @@ type Source struct {
 // ErrUnsupported is returned for source forms this build does not fetch yet.
 var ErrUnsupported = errors.New("unsupported source")
 
-// CloneURL returns the location a git source is cloned from. Local sources return their path.
+// CloneURL returns the location a git source is cloned from. Local sources return their path and a
+// download returns its URL.
 func (s Source) CloneURL() string {
 	if s.SourceURL != "" {
 		return s.SourceURL
@@ -58,6 +62,29 @@ func (s Source) CloneURL() string {
 		return "https://github.com/" + s.Source + ".git"
 	}
 	return s.Source
+}
+
+// Display is the source as user-facing output may show it. A download URL loses its userinfo, query
+// and fragment, which can carry secrets.
+func (s Source) Display() string {
+	if s.Kind != KindDownload {
+		return s.Source
+	}
+	return sanitizedURL(s.Source)
+}
+
+// Recordable reports whether the lock may keep this source's location, so update, check and restore
+// can fetch it again. A download URL with a query string or userinfo is not recorded, because it
+// may hold credentials.
+func (s Source) Recordable() bool {
+	if s.Kind != KindDownload {
+		return true
+	}
+	u, err := url.Parse(s.Source)
+	if err != nil {
+		return false
+	}
+	return u.RawQuery == "" && u.User == nil
 }
 
 var (
@@ -210,8 +237,9 @@ func isURLOrHostPath(s string) bool {
 	return ok && strings.Contains(first, ".")
 }
 
-// checkUserinfo rejects URLs whose credentials would end up in the lock or an error message. The
-// "git" user of an SSH URL is not a credential.
+// checkUserinfo rejects the credentials of a git URL, which would end up in the lock or an error
+// message. A download may authenticate with the userinfo of its URL, so download entries are kept
+// out of the lock instead (see Source.Recordable). The "git" user of an SSH URL is not a credential.
 func checkUserinfo(u *url.URL) error {
 	if u.User == nil {
 		return nil
@@ -239,14 +267,14 @@ func parseURLSource(raw string, frag fragment) (Source, error) {
 		}
 		return Source{}, fmt.Errorf("invalid source %q", raw)
 	}
-	if err := checkUserinfo(u); err != nil {
-		return Source{}, err
-	}
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {
 	case "http", "https":
 		return parseHTTPS(u, frag)
 	case "ssh", "git", "file":
+		if err := checkUserinfo(u); err != nil {
+			return Source{}, err
+		}
 		if strings.ContainsAny(raw, "\n\r") {
 			return Source{}, fmt.Errorf("invalid source %q", raw)
 		}
@@ -259,29 +287,70 @@ func parseURLSource(raw string, frag fragment) (Source, error) {
 	}
 }
 
-// parseHTTPS routes an http(s) URL by host and path shape, in upstream's order.
+// parseHTTPS routes an http(s) URL by host and path shape, in upstream's order. A URL that is not a
+// git repository shape is a direct download; what it serves is decided by its bytes when it is
+// fetched.
 func parseHTTPS(u *url.URL, frag fragment) (Source, error) {
 	segs := pathSegments(u)
-	if isGitHubHost(u.Hostname()) {
-		return parseGitHubURL(u, segs, frag)
-	}
-	if i := treeMarker(segs); i >= 0 {
-		return parseGitLabTree(u, segs, i, frag)
-	}
-	if isGitLabHost(u.Hostname()) {
-		return parseGitLabURL(u.String(), frag)
-	}
-	if i := azureMarker(segs); i >= 0 {
-		return parseAzure(u, segs, i, frag)
-	}
-	if strings.HasSuffix(strings.ToLower(u.Path), ".git") {
-		if len(segs) == 0 {
-			return Source{}, fmt.Errorf("invalid git URL %q", u.String())
+	if !isGitHTTPS(u, segs) {
+		if looksLikeRepositoryPage(u.Hostname(), segs) {
+			return Source{}, fmt.Errorf("%w: %s is not a local directory or a git repository",
+				ErrUnsupported, RedactCredentials(u.String()))
 		}
-		return Source{Kind: KindGit, Source: u.String(), SourceURL: u.String(),
-			Ref: frag.Ref, SkillSelector: frag.Skill, Direct: frag.Skill != ""}, nil
+		return parseDownload(u), nil
 	}
-	return Source{}, fmt.Errorf("%w: %s is not a local directory or a git repository", ErrUnsupported, u.String())
+	if err := checkUserinfo(u); err != nil {
+		return Source{}, err
+	}
+	tree, azure := treeMarker(segs), azureMarker(segs)
+	switch {
+	case isGitHubHost(u.Hostname()):
+		return parseGitHubURL(u, segs, frag)
+	case tree >= 0:
+		return parseGitLabTree(u, segs, tree, frag)
+	case isGitLabHost(u.Hostname()):
+		return parseGitLabURL(u.String(), frag)
+	case azure >= 0:
+		return parseAzure(u, segs, azure, frag)
+	case len(segs) == 0:
+		return Source{}, fmt.Errorf("invalid git URL %q", u.String())
+	}
+	return Source{Kind: KindGit, Source: u.String(), SourceURL: u.String(),
+		Ref: frag.Ref, SkillSelector: frag.Skill, Direct: frag.Skill != ""}, nil
+}
+
+// isGitHTTPS reports whether an http(s) URL has a shape this build clones instead of downloading.
+func isGitHTTPS(u *url.URL, segs []string) bool {
+	return isGitHubHost(u.Hostname()) || treeMarker(segs) >= 0 || isGitLabHost(u.Hostname()) ||
+		azureMarker(segs) >= 0 || strings.HasSuffix(strings.ToLower(u.Path), ".git")
+}
+
+// isForgeHost reports whether a host is a known git forge, whose URLs that are not a repository
+// shape must not be downloaded.
+func isForgeHost(host string) bool {
+	h := strings.ToLower(host)
+	return h == "bitbucket.org" || h == "www.bitbucket.org" || h == "dev.azure.com" ||
+		strings.HasSuffix(h, ".visualstudio.com")
+}
+
+// looksLikeRepositoryPage reports whether an HTTP(S) URL that is not a git repository shape still
+// names a repository page rather than a downloadable file: a known forge host or a "/tree/" path.
+func looksLikeRepositoryPage(host string, segs []string) bool {
+	if isForgeHost(host) {
+		return true
+	}
+	for _, segment := range segs {
+		if segment == "tree" {
+			return true
+		}
+	}
+	return false
+}
+
+// parseDownload classifies a plain HTTP(S) URL as a direct download. The URL is kept as written.
+func parseDownload(u *url.URL) Source {
+	raw := u.String()
+	return Source{Kind: KindDownload, Source: raw, SourceURL: raw}
 }
 
 func isGitHubHost(host string) bool {

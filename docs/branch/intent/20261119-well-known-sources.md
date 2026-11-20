@@ -12,10 +12,10 @@ with digest verification, without a clone and without trusting an unverified dow
 
 ## Acceptance criteria
 
-- For an HTTP(S) source, the tool probes the documented well-known index locations (the scoped index
-  first, then the host root) and installs the skills the index lists.
-- Every downloaded skill is verified against the index digest (`sha256:<hex>`); a mismatch is fatal
-  and never falls back to another source.
+- For an HTTP(S) source, the tool probes the four documented index locations (`agent-skills` then
+  `skills`, each path-relative then origin root) and installs the skills the index lists.
+- Schema v0.2.0 skills are verified against the index digest (`sha256:<hex>`); a mismatch is fatal and
+  never falls back. The legacy schema has no digest and is accepted as upstream does.
 - A scoped index URL (`/…/.well-known/skills/index.json`) never widens to the host root index.
 - Lock entries record `sourceType: "well-known"`, `sourceBaseUrl` and `wellKnownDigest`; the global
   lock's folder hash is empty for these entries, as upstream does.

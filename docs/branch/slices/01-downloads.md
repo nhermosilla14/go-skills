@@ -1,6 +1,6 @@
 # Download and archive sources
 
-- Status: In progress
+- Status: Done
 - Intents: 20261119-download-and-archive-sources
 - ADRs: 20261119-download-and-archive-safety
 

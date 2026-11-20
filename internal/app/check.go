@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,7 +91,7 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		if status == StatusModified {
 			report.Modified = append(report.Modified, key)
 		}
-		update, err := checkUpdate(ctx, ref, opts.Runner)
+		update, err := checkUpdate(ctx, key, ref, opts.Runner, env.IncludeInternal)
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", key, err))
 			continue
@@ -164,6 +165,8 @@ func refOf(entry lockfile.Entry) lockRef {
 		SkillName:  entry.SkillName,
 		Ref:        entry.Ref,
 		Commit:     entry.Commit,
+		SkillPath:  entry.SkillPath,
+		Hash:       entry.ComputedHash,
 	}
 }
 
@@ -189,13 +192,17 @@ func selectCheckKeys(keys []string, names []string) (map[string]bool, []string) 
 	return selected, unmatched
 }
 
-// checkUpdate reports whether the recorded ref moved upstream. Local sources never have updates,
-// and a source type this build cannot fetch is reported as uncheckable.
-func checkUpdate(ctx context.Context, entry lockRef, runner source.Runner) (bool, error) {
+// checkUpdate reports whether the recorded ref moved upstream, or a download's content changed.
+// Local sources never have updates, and a source type this build cannot fetch is reported as
+// uncheckable.
+func checkUpdate(ctx context.Context, key string, entry lockRef, runner source.Runner,
+	includeInternal bool) (bool, error) {
 	switch entry.SourceType {
 	case "local":
 		return false, nil
 	case "github", "gitlab", "git":
+	case "download":
+		return checkDownloadUpdate(ctx, key, entry, includeInternal)
 	case "":
 		return false, fmt.Errorf("the lock entry has no source type")
 	default:
@@ -215,4 +222,46 @@ func checkUpdate(ctx context.Context, entry lockRef, runner source.Runner) (bool
 		return false, err
 	}
 	return entry.Commit == "" || !strings.EqualFold(head, entry.Commit), nil
+}
+
+// checkDownloadUpdate re-fetches a download and compares the content of the recorded skill with the
+// hash in the lock. A changed body is an available update.
+func checkDownloadUpdate(ctx context.Context, key string, entry lockRef, includeInternal bool) (bool, error) {
+	raw := entry.Source
+	if entry.SourceURL != "" {
+		raw = entry.SourceURL
+	}
+	if raw == "" {
+		return false, errors.New("no source recorded")
+	}
+	if entry.Hash == "" {
+		return false, nil // the installed drift is a Modified finding; there is nothing to compare
+	}
+	src, err := source.Parse(raw)
+	if err != nil {
+		return false, err
+	}
+	dir, err := os.MkdirTemp("", "skills-check-*")
+	if err != nil {
+		return false, fmt.Errorf("creating a temporary directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	tree, err := acquireUpdateTree(ctx, src, dir, nil)
+	if err != nil {
+		return false, err
+	}
+	found, err := skill.Discover(tree.Dir, skill.Options{IncludeInternal: includeInternal, FullDepth: true})
+	if err != nil {
+		return false, err
+	}
+	name := updateRecordedName(updateRecord{SkillName: entry.SkillName}, key)
+	fetched, located, ok := locateUpdateSkill(found.Skills, name, entry.SkillPath)
+	if !ok {
+		return false, errors.New(located.Reason)
+	}
+	digest, err := hash.Dir(fetched.Dir)
+	if err != nil {
+		return false, err
+	}
+	return !strings.EqualFold(digest, entry.Hash), nil
 }

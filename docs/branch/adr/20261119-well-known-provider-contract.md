@@ -15,14 +15,18 @@ fall back on a mismatch.
 
 ## Decision
 
-- **Discovery:** for an HTTP(S) source, probe the documented scoped index first
-  (`<path>/.well-known/skills/index.json`) and then the host root
-  (`/.well-known/skills/index.json`), all candidates under one 10-second budget. A scoped index never
-  widens to the root index.
-- **Verification:** every skill file is checked against the index digest (`sha256:<hex>`); a mismatch
-  is fatal, with no fallback to git or to another provider. A missing digest rejects that entry.
-- **Fetch:** files are downloaded individually with the download limits; the same traversal rules as
-  archives apply to the declared paths.
+- **Discovery:** probe, in order, `<base>/.well-known/agent-skills/index.json`,
+  `<origin>/.well-known/agent-skills/index.json`, `<base>/.well-known/skills/index.json` and
+  `<origin>/.well-known/skills/index.json`, all candidates under one 10-second budget, and use the
+  highest-priority successful index. Update checks send `X-Skills-Update-Check: 1`. A path-scoped
+  index never widens to the root index.
+- **Verification:** schema v0.2.0 entries must carry `sha256:<hex>` and a mismatch is fatal, with no
+  fallback to git or to another provider; malformed entries are skipped individually. The legacy
+  schema (v0.1.0) has no digest and is accepted as upstream does; its file list is all-or-nothing.
+- **Fetch:** v0.2.0 artifacts are single files (`skill-md` or an archive); archives use the provider
+  limits of 50 MiB unpacked and 1000 entries, and links are refused. v0.1.0 lists individual files
+  that are fetched one by one; a listed file that cannot be fetched fails that skill. Declared paths
+  follow the same traversal rules.
 - **Lock:** `sourceType: "well-known"`, `sourceBaseUrl`, `wellKnownDigest`; `source` is the provider
   identifier. The global lock stores an empty folder hash for these entries, matching upstream.
 - **Re-fetch:** `update`, `check` and restore go through the provider again and compare digests; an

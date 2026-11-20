@@ -35,7 +35,8 @@ func (f *File) encode() ([]byte, error) {
 }
 
 // members lists the entry fields in the order upstream writes them. Optional fields are omitted
-// when empty; computedHash is always written, because "" is a meaningful value.
+// when empty, including the URL of a download whose address may not be recorded; computedHash is
+// always written, because "" is a meaningful value.
 func (e Entry) members() []member {
 	var ms []member
 	add := func(key, value string, always bool) {
@@ -43,7 +44,7 @@ func (e Entry) members() []member {
 			ms = append(ms, member{key, quote(value)})
 		}
 	}
-	add("source", e.Source, true)
+	add("source", e.Source, false)
 	add("sourceUrl", e.SourceURL, false)
 	add("ref", e.Ref, false)
 	add("commit", e.Commit, false)

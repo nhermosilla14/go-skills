@@ -116,7 +116,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	}
 	rep := Report{
 		Warnings: found.Warnings,
-		Source:   src.Source,
+		Source:   src.Display(),
 		Ref:      src.Ref,
 		Scope:    string(ScopeProject),
 	}
@@ -192,6 +192,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		source:     src,
 		root:       tree.Dir,
 		commit:     tree.Commit,
+		skillPath:  tree.SkillPath,
 		entries:    entries,
 		results:    rep.Results,
 		hashes:     rep.Hashes,
@@ -206,6 +207,9 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	}
 	if saved {
 		rep.LockPath = lockPath
+	}
+	if src.Kind == source.KindDownload && !src.Recordable() && saved {
+		rep.Warnings = append(rep.Warnings, downloadNotRecorded(src, chosen))
 	}
 	if !global && len(selected) > 0 {
 		// Restore falls back to this selection when -a is absent.
@@ -232,7 +236,7 @@ func questionsFor(opts AddOptions, src source.Source, skills []skill.Skill,
 	}
 	requested := requestedSkills(opts.Skills, src.SkillSelector)
 	return PlanQuestions(opts, Facts{
-		Source:          src.Source,
+		Source:          src.Display(),
 		Skills:          skills,
 		RequestedSkills: requested,
 		Detected:        detected,
@@ -420,7 +424,19 @@ func noSkillsError(src source.Source, tree source.Tree) error {
 	if src.Kind == source.KindLocal {
 		return fmt.Errorf("no valid skills found in %s", tree.Dir)
 	}
-	return fmt.Errorf("no valid skills found in %s", src.Source)
+	return fmt.Errorf("no valid skills found in %s", src.Display())
+}
+
+// downloadNotRecorded warns that a download kept its URL out of the lock, so update, check and
+// restore cannot fetch it again.
+func downloadNotRecorded(src source.Source, chosen []skill.Skill) string {
+	names := make([]string, 0, len(chosen))
+	for _, s := range chosen {
+		names = append(names, s.Name)
+	}
+	return fmt.Sprintf("not recording the URL of %s in the lock: %s has a query string or credentials, "+
+		"which may be secret; re-add the pinned URL to update or restore it",
+		strings.Join(names, ", "), src.Display())
 }
 
 // requestedSkills merges the --skill names with the skill named by the source's "@name" suffix.
@@ -535,6 +551,7 @@ type recordInput struct {
 	source     source.Source
 	root       string
 	commit     string
+	skillPath  string // SKILL.md path the acquisition knows, set by a single-file download
 	entries    []install.Entry
 	results    []install.Result
 	hashes     map[string]string
@@ -638,7 +655,10 @@ func globalLockEntry(in recordInput, e install.Entry, lock *lockfile.GlobalFile)
 		}
 		entry.Ref = in.source.Ref
 		entry.Commit = in.commit
-		entry.SkillPath = e.Skill.SkillPath()
+		entry.SkillPath = recordedSkillPath(in, e)
+		if in.source.Kind == source.KindDownload && !in.source.Recordable() {
+			entry.Source, entry.SourceURL = "", ""
+		}
 	}
 	if prev, ok := lock.Get(e.Name); ok && prev.InstalledAt != "" {
 		entry.InstalledAt = prev.InstalledAt
@@ -718,7 +738,10 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 		}
 		entry.Ref = in.source.Ref
 		entry.Commit = in.commit
-		entry.SkillPath = e.Skill.SkillPath()
+		entry.SkillPath = recordedSkillPath(in, e)
+		if in.source.Kind == source.KindDownload && !in.source.Recordable() {
+			entry.Source, entry.SourceURL = "", ""
+		}
 	}
 	if e.RenameTo != "" && e.RenameTo != e.Skill.Name {
 		entry.SkillName = e.Skill.Name
@@ -730,6 +753,15 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 		entry.InstallMode = "copy"
 	}
 	return entry
+}
+
+// recordedSkillPath is the SKILL.md path the lock records: the one a single-file download
+// materialized when it is known, the discovered path otherwise.
+func recordedSkillPath(in recordInput, e install.Entry) string {
+	if in.skillPath != "" {
+		return in.skillPath
+	}
+	return e.Skill.SkillPath()
 }
 
 // lockSourceType maps a source kind to the lock vocabulary. Azure repositories are recorded as

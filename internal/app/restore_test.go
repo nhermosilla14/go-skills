@@ -318,7 +318,6 @@ func TestRestoreReportsUnsupportedSourceTypes(t *testing.T) {
 	project := t.TempDir()
 	saveProjectLock(t, project, map[string]lockfile.Entry{
 		"local":   {Source: "./src", SourceType: "local"},
-		"down":    {Source: "https://example.com/x.md", SourceType: "download"},
 		"known":   {Source: "https://example.com", SourceType: "well-known"},
 		"package": {Source: "pkg", SourceType: "node_modules"},
 	})
@@ -328,7 +327,7 @@ func TestRestoreReportsUnsupportedSourceTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if len(rep.Unrestorable) != 4 {
+	if len(rep.Unrestorable) != 3 {
 		t.Fatalf("unrestorable = %+v, want every entry", rep.Unrestorable)
 	}
 	if rep.Failed() {

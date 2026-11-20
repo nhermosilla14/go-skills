@@ -18,6 +18,10 @@ import (
 type Tree struct {
 	Dir    string
 	Commit string
+	// SkillPath is the SKILL.md path relative to Dir when the acquisition is one known file, which
+	// only a direct download of a single SKILL.md is. It is empty otherwise, and discovery then
+	// derives the path.
+	SkillPath string
 }
 
 // Command is one external command for a Runner.
@@ -57,10 +61,10 @@ func (ExecRunner) Run(ctx context.Context, cmd Command) (Output, error) {
 	return Output{Stdout: stdout.String(), Stderr: stderr.String()}, err
 }
 
-// Acquire resolves a source: a local directory is returned as is, and a git source is checked out
-// into dir, which the caller owns and removes.
+// Acquire resolves a source: a local directory is returned as is, a download is materialized into
+// dir, and a git source is checked out into dir, which the caller owns and removes.
 func Acquire(ctx context.Context, src Source, dir string) (Tree, error) {
-	if src.Kind != KindLocal {
+	if src.Kind != KindLocal && src.Kind != KindDownload {
 		if _, err := exec.LookPath("git"); err != nil {
 			return Tree{}, errMissingGit
 		}
@@ -83,6 +87,16 @@ func AcquireWith(ctx context.Context, src Source, dir string, runner Runner) (Tr
 			return Tree{}, fmt.Errorf("source is not a directory: %s", src.SourceURL)
 		}
 		return Tree{Dir: filepath.Clean(src.SourceURL)}, nil
+	}
+	if src.Kind == KindDownload {
+		if dir == "" {
+			return Tree{}, errors.New("no temporary directory was provided for the download")
+		}
+		dl, err := FetchDownload(ctx, src.CloneURL(), dir)
+		if err != nil {
+			return Tree{}, err
+		}
+		return Tree{Dir: dl.Root, SkillPath: dl.SkillPath}, nil
 	}
 	if runner == nil {
 		runner = ExecRunner{}

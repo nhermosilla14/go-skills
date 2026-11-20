@@ -485,9 +485,7 @@ func uncheckableReason(e updateRecord) string {
 	switch e.SourceType {
 	case "local":
 		return "Local path"
-	case "github", "gitlab", "git", "azure":
-	case "download":
-		return "Download sources cannot be checked automatically"
+	case "github", "gitlab", "git", "azure", "download":
 	case "well-known":
 		return "Well-known skill"
 	default:
