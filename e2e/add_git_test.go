@@ -207,7 +207,7 @@ func TestE2EGitMissing(t *testing.T) {
 		t.Skip("PATH handling differs on Windows")
 	}
 	project := t.TempDir()
-	res := runEnv(t, project, []string{"PATH=" + t.TempDir()}, "add", "owner/repo", "--list")
+	res := runEnv(t, project, []string{"PATH=" + t.TempDir()}, "add", "owner/repo#main", "--list")
 	if res.exit != 1 {
 		t.Fatalf("exit = %d, want 1\nstderr:\n%s", res.exit, res.stderr)
 	}

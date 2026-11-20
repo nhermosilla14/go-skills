@@ -65,14 +65,20 @@ func (ExecRunner) Run(ctx context.Context, cmd Command) (Output, error) {
 }
 
 // Acquire resolves a source: a local directory is returned as is, a download is materialized into
-// dir, and a git source is checked out into dir, which the caller owns and removes.
+// dir, and a git source is checked out into dir, which the caller owns and removes. A public GitHub
+// source without an explicit ref is read through the API first and cloned only when that fails.
 func Acquire(ctx context.Context, src Source, dir string) (Tree, error) {
+	if tree, ok, err := blobAcquire(ctx, src, dir); err != nil {
+		return Tree{}, err
+	} else if ok {
+		return tree, nil
+	}
 	if src.needsGit() {
 		if _, err := exec.LookPath("git"); err != nil {
 			return Tree{}, errMissingGit
 		}
 	}
-	return AcquireWith(ctx, src, dir, ExecRunner{})
+	return acquireWith(ctx, src, dir, ExecRunner{})
 }
 
 // needsGit reports whether acquiring the source clones a repository.
@@ -90,6 +96,16 @@ var errMissingGit = errors.New("git is required to install from a git source but
 // AcquireWith is Acquire with an explicit runner, for tests. It does not require git on PATH, so a
 // fake runner can be used without the real binary.
 func AcquireWith(ctx context.Context, src Source, dir string, runner Runner) (Tree, error) {
+	if tree, ok, err := blobAcquire(ctx, src, dir); err != nil {
+		return Tree{}, err
+	} else if ok {
+		return tree, nil
+	}
+	return acquireWith(ctx, src, dir, runner)
+}
+
+// acquireWith is the acquisition body after the blob fast path was declined or failed.
+func acquireWith(ctx context.Context, src Source, dir string, runner Runner) (Tree, error) {
 	if src.Kind == KindLocal {
 		info, err := os.Stat(src.SourceURL)
 		if err != nil {
