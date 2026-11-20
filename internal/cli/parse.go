@@ -26,18 +26,19 @@ const (
 
 // Command is a parsed command line.
 type Command struct {
-	Kind    Kind
-	Add     app.AddOptions     // set when Kind is KindAdd
-	List    app.ListOptions    // set when Kind is KindList
-	Check   app.CheckOptions   // set when Kind is KindCheck
-	Remove  app.RemoveOptions  // set when Kind is KindRemove
-	Update  app.UpdateOptions  // set when Kind is KindUpdate
-	Restore app.RestoreOptions // set when Kind is KindRestore
-	Use     UseOptions         // set when Kind is KindUse
-	Init    app.InitOptions    // set when Kind is KindInit
-	Find    FindOptions        // set when Kind is KindFind
-	UseHelp bool               // use asked for its own help
-	JSON    bool               // --json, for list
+	Kind     Kind
+	Add      app.AddOptions     // set when Kind is KindAdd
+	List     app.ListOptions    // set when Kind is KindList
+	Check    app.CheckOptions   // set when Kind is KindCheck
+	Remove   app.RemoveOptions  // set when Kind is KindRemove
+	Update   app.UpdateOptions  // set when Kind is KindUpdate
+	Restore  app.RestoreOptions // set when Kind is KindRestore
+	Use      UseOptions         // set when Kind is KindUse
+	Init     app.InitOptions    // set when Kind is KindInit
+	Find     FindOptions        // set when Kind is KindFind
+	UseHelp  bool               // use asked for its own help
+	InitHelp bool               // init asked for its own help
+	JSON     bool               // --json, for list
 }
 
 // FindOptions is the parsed `find` command line. An empty Query means the interactive prompt or,
@@ -89,6 +90,10 @@ func Parse(args []string) (Command, error) {
 		return parseFind(args[1:])
 	case name == "init":
 		return parseInit(args[1:])
+	case name == "experimental_sync" || name == "sync":
+		return Command{}, usagef("sync is not supported by this implementation: " +
+			"the npm/node_modules integration is excluded from this build. " +
+			"Use 'skills add' for git or local sources")
 	case strings.HasPrefix(name, "-"):
 		return Command{}, usagef("unknown option '%s'", name)
 	default:
@@ -1002,7 +1007,7 @@ func parseInit(args []string) (Command, error) {
 		}
 	}
 	if help {
-		return Command{Kind: KindHelp}, nil
+		return Command{Kind: KindInit, InitHelp: true}, nil
 	}
 	if len(names) > 1 {
 		return Command{}, usagef("unexpected argument '%s': only one skill name is allowed", names[1])

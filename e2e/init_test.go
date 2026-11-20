@@ -20,6 +20,33 @@ func initOutput(name, displayPath string) string {
 		"  2. Add supporting files next to SKILL.md and reference them from the instructions.\n"
 }
 
+// TestE2EInitHelp asserts the command-specific init help block and that it goes to stdout.
+func TestE2EInitHelp(t *testing.T) {
+	res := run(t, t.TempDir(), "init", "--help")
+	if res.exit != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", res.exit, res.stderr)
+	}
+	if res.stderr != "" {
+		t.Errorf("stderr = %q, want empty", res.stderr)
+	}
+	for _, want := range []string{
+		"Usage: skills init [name]",
+		"./SKILL.md",
+		"./<name>/SKILL.md",
+		"YAML-escaped",
+		"never overwritten",
+		"exit 2",
+		"-h, --help",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout misses %q:\n%s", want, res.stdout)
+		}
+	}
+	if strings.Contains(res.stdout, "Add options:") {
+		t.Errorf("stdout is the top-level help:\n%s", res.stdout)
+	}
+}
+
 func TestE2EInit(t *testing.T) {
 	t.Run("default template", func(t *testing.T) {
 		project := filepath.Join(t.TempDir(), "demo-project")

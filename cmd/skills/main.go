@@ -66,6 +66,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case cli.KindUse:
 		return runUse(cmd, stdout, stderr)
 	case cli.KindInit:
+		if cmd.InitHelp {
+			fmt.Fprint(stdout, cli.InitHelp())
+			return exitOK
+		}
 		return runInit(cmd.Init, stderr)
 	case cli.KindFind:
 		return runFind(cmd.Find, stdout, stderr)

@@ -29,6 +29,11 @@ Commands:
   help              Show this help
   version           Show version, commit and build date
 
+Not supported in this build:
+  experimental_sync, sync
+                    npm/node_modules integration is excluded; they exit 2
+                    and point at 'add' for git or local sources
+
 Sources:
   owner/repo                    GitHub repository
   owner/repo/subpath            only the skills under a subdirectory

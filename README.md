@@ -115,6 +115,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 | `init` | Create a new `SKILL.md` skeleton. | Delivered |
 | `install` | With a source, same as `add`; without one, restore project skills from `skills-lock.json` at their pinned commits. | Project restore |
 | `experimental_install` | Alias of restore from the lock file. | Project restore |
+| `experimental_sync`, `sync` | Explicit not-supported stub: npm/`node_modules` integration is excluded, so it exits 2 and points at `add` for git or local sources. | Not supported |
 
 Interactive runs use a keyboard-driven flow: grouped skill selection with descriptions and a
 detail pane, agent selection, install method and confirmation. `--json` requires `-y` (or `--all`)

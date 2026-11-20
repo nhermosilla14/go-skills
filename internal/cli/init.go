@@ -8,6 +8,23 @@ import (
 	"github.com/nhermosilla14/go-skills/internal/skill"
 )
 
+// InitHelp returns the command-specific help text for init.
+func InitHelp() string {
+	return `Usage: skills init [name] [options]
+
+Create the documented SKILL.md template here (./SKILL.md), or in a new
+directory (./<name>/SKILL.md) when a name is given. The name in the template
+is YAML-escaped.
+
+A name must stay inside the working directory: absolute paths and names that
+escape it, such as ../x, are rejected with exit 2. An existing SKILL.md is
+never overwritten; init prints its path and exits 0.
+
+Init options:
+  -h, --help           Show this help
+`
+}
+
 // WriteInit prints the result of init, or the no-op notice when SKILL.md already existed.
 func WriteInit(w io.Writer, rep app.InitReport) {
 	display := skill.SanitizeDisplay(rep.DisplayPath)

@@ -1,5 +1,6 @@
 # Sync stub and help polish
 
+- Status: Done
 - Intents: 20261119-sync-stub-and-help-polish
 - ADRs: 20261119-upstream-parity-policy
 

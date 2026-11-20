@@ -188,6 +188,8 @@ func TestParseUsageErrors(t *testing.T) {
 		want string
 	}{
 		{"unknown command", []string{"frobnicate"}, "unknown command 'frobnicate'"},
+		{"experimental sync", []string{"experimental_sync"}, "not supported"},
+		{"sync alias", []string{"sync"}, "npm/node_modules"},
 		{"unknown long flag", []string{"add", "./x", "--force"}, "unknown option '--force'"},
 		{"unknown short flag", []string{"add", "./x", "-q"}, "unknown option '-q'"},
 		{"extra source", []string{"add", "./a", "./b"}, "unexpected argument './b'"},
@@ -555,9 +557,24 @@ func TestParseInitHelp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Parse %v: %v", args, err)
 		}
-		if cmd.Kind != KindHelp {
-			t.Errorf("Parse %v = %v, want help", args, cmd.Kind)
+		if cmd.Kind != KindInit || !cmd.InitHelp {
+			t.Errorf("Parse %v = %v (InitHelp %v), want init help", args, cmd.Kind, cmd.InitHelp)
 		}
+	}
+}
+
+func TestInitHelpNamesTheCommand(t *testing.T) {
+	help := InitHelp()
+	for _, want := range []string{
+		"Usage: skills init", "SKILL.md", "./<name>/SKILL.md", "YAML-escaped",
+		"never overwritten", "escape", "exit 2",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("init help misses %q", want)
+		}
+	}
+	if strings.Contains(help, "Add options:") {
+		t.Error("init help leaked the top-level help")
 	}
 }
 
@@ -570,6 +587,7 @@ func TestHelpListsAgentsAndOnlyWorkingFlags(t *testing.T) {
 		"experimental_install", "Restore options:", "--dry-run",
 		"--frozen-lockfile", "--no-frozen-lockfile", "JENKINS_URL", "init [name]",
 		"find, f, s, search", "Find options:", "--owner <owner>",
+		"Not supported in this build:", "experimental_sync, sync", "npm/node_modules",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help misses %q", want)

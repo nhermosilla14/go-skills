@@ -41,6 +41,22 @@ func TestRunUseHelp(t *testing.T) {
 	}
 }
 
+func TestRunInitHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"init", "--help"}, &stdout, &stderr); code != exitOK {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage: skills init") {
+		t.Errorf("stdout is not the init help:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Add options:") {
+		t.Errorf("stdout is the top-level help:\n%s", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestRunUseMissingSource(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"use"}, &stdout, &stderr); code != exitFailure {
