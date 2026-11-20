@@ -370,6 +370,7 @@ func (l *projectUpdateLock) entry(key string) (updateRecord, bool) {
 		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
 		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
 		Subagents: e.Subagents, InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+		SourceBaseURL: e.SourceBaseURL, WellKnownDigest: e.WellKnownDigest,
 	}, ok
 }
 
@@ -378,6 +379,7 @@ func (l *projectUpdateLock) put(key string, e updateRecord) {
 		Source: e.Source, SourceURL: e.SourceURL, SourceType: e.SourceType, Ref: e.Ref,
 		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
 		Subagents: e.Subagents, InstallMode: e.InstallMode, ComputedHash: e.ComputedHash,
+		SourceBaseURL: e.SourceBaseURL, WellKnownDigest: e.WellKnownDigest,
 	})
 }
 
@@ -427,12 +429,14 @@ type updateTask struct {
 
 // updateGroup is one source and ref, acquired once for every entry it tracks.
 type updateGroup struct {
-	source string
-	ref    string
-	dir    string
-	tree   source.Tree
-	found  skill.Result
-	err    string
+	source    string
+	ref       string
+	wellKnown bool
+	names     []string
+	dir       string
+	tree      source.Tree
+	found     skill.Result
+	err       string
 }
 
 // planUpdates classifies the lock entries: the names that match nothing are reported, the rest are
@@ -468,13 +472,16 @@ func planUpdates(lock updateLock, selected map[string]bool, unmatched []string,
 			continue
 		}
 		raw := source.RedactCredentials(updateRecordSource(entry))
-		groupKey := raw + "\x00" + entry.Ref
+		groupKey := raw + "\x00" + entry.Ref + "\x00" + entry.SourceType
 		index, ok := groupIndex[groupKey]
 		if !ok {
 			index = len(groups)
 			groupIndex[groupKey] = index
-			groups = append(groups, &updateGroup{source: raw, ref: entry.Ref})
+			groups = append(groups, &updateGroup{
+				source: raw, ref: entry.Ref, wellKnown: entry.SourceType == "well-known",
+			})
 		}
+		groups[index].names = append(groups[index].names, updateRecordedName(entry, key))
 		tasks = append(tasks, updateTask{key: key, entry: entry, group: index})
 	}
 	return tasks, groups
@@ -485,9 +492,7 @@ func uncheckableReason(e updateRecord) string {
 	switch e.SourceType {
 	case "local":
 		return "Local path"
-	case "github", "gitlab", "git", "azure", "download":
-	case "well-known":
-		return "Well-known skill"
+	case "github", "gitlab", "git", "azure", "download", "well-known":
 	default:
 		if e.SourceType == "" {
 			return "No source type recorded"
@@ -506,6 +511,9 @@ func uncheckableReason(e updateRecord) string {
 // updateRecordSource is the location a lock entry is fetched from: the fetch URL when recorded, the
 // shorthand otherwise.
 func updateRecordSource(e updateRecord) string {
+	if e.SourceType == "well-known" && e.SourceBaseURL != "" {
+		return e.SourceBaseURL
+	}
 	if e.SourceURL != "" {
 		return e.SourceURL
 	}
@@ -568,16 +576,19 @@ func acquireUpdateGroups(groups []*updateGroup, env Env, runner source.Runner, r
 // fetchUpdateGroup clones the group source and discovers its skills. The temporary tree is kept
 // until the run ends so every entry of the group shares it.
 func fetchUpdateGroup(g *updateGroup, env Env, runner source.Runner) string {
-	src, err := source.Parse(g.source)
-	if err != nil {
-		return err.Error()
-	}
-	src.Ref = g.ref
 	dir, err := os.MkdirTemp("", "skills-update-*")
 	if err != nil {
 		return fmt.Sprintf("creating a temporary directory: %v", err)
 	}
 	g.dir = dir
+	if g.wellKnown {
+		return fetchWellKnownGroup(g, dir, true)
+	}
+	src, err := source.Parse(g.source)
+	if err != nil {
+		return err.Error()
+	}
+	src.Ref = g.ref
 	tree, err := acquireUpdateTree(context.Background(), src, dir, runner)
 	if err != nil {
 		return err.Error()
@@ -587,6 +598,25 @@ func fetchUpdateGroup(g *updateGroup, env Env, runner source.Runner) string {
 		return err.Error()
 	}
 	g.tree, g.found = tree, found
+	return ""
+}
+
+// fetchWellKnownGroup re-fetches the selected skills through the provider. A missing index is a
+// failure, never a silent fall back to a direct download.
+func fetchWellKnownGroup(g *updateGroup, dir string, updateCheck bool) string {
+	idx, err := source.ProbeWellKnown(context.Background(), g.source, updateCheck)
+	if err != nil {
+		return err.Error()
+	}
+	if idx == nil {
+		return fmt.Sprintf("no well-known index found at %s", g.source)
+	}
+	tree, err := idx.Fetch(context.Background(), dir, g.names)
+	if err != nil {
+		return err.Error()
+	}
+	g.tree = tree
+	g.found = skill.Result{Skills: tree.WellKnown.Skills()}
 	return ""
 }
 
@@ -630,12 +660,69 @@ func updateSkill(env Env, agentEnv agents.Environment, lock updateLock, t update
 			return UpdateResult{Name: t.key, Status: UpdateCurrent},
 				backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
 		}
-	} else if !moved && len(locations) > 0 && t.entry.recordedHash() != "" &&
-		strings.EqualFold(upstream, t.entry.recordedHash()) {
-		return UpdateResult{Name: t.key, Status: UpdateCurrent},
-			backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
+	} else if !moved && len(locations) > 0 {
+		recorded := recordedUpdateHash(t.entry, locations[0], agentEnv, installed, lock.global())
+		if recorded != "" && strings.EqualFold(upstream, recorded) {
+			if t.entry.SourceType == string(source.KindWellKnown) {
+				return UpdateResult{Name: t.key, Status: UpdateCurrent},
+					backfillWellKnown(lock, t.entry, t.key, g.tree, env), ""
+			}
+			return UpdateResult{Name: t.key, Status: UpdateCurrent},
+				backfillCommit(lock, t.entry, t.key, g.tree.Commit, env), ""
+		}
 	}
 	return reinstallSkill(env, agentEnv, lock, t, g, found, installed, locations)
+}
+
+// recordedUpdateHash is the hash update compares against. A well-known global entry deliberately
+// records an empty folder hash, so its comparison uses the content currently installed.
+func recordedUpdateHash(entry updateRecord, location agents.Agent, env agents.Environment,
+	installed string, global bool) string {
+	if hash := entry.recordedHash(); hash != "" {
+		return hash
+	}
+	if entry.SourceType != string(source.KindWellKnown) {
+		return ""
+	}
+	digest, err := hashInstalled(agentSkillPath(location, env, installed, global))
+	if err != nil {
+		return ""
+	}
+	return digest
+}
+
+// backfillWellKnown records a digest the index changed without changing the content, so a following
+// check does not report it again.
+func backfillWellKnown(lock updateLock, entry updateRecord, key string, tree source.Tree, env Env) bool {
+	content, ok := wellKnownContent(tree, updateRecordedName(entry, key))
+	if !ok || tree.WellKnown == nil {
+		return false
+	}
+	changed := false
+	if content.Digest != "" && !strings.EqualFold(content.Digest, entry.WellKnownDigest) {
+		entry.WellKnownDigest = content.Digest
+		changed = true
+	}
+	if entry.SourceBaseURL == "" && tree.WellKnown.BaseURL != "" {
+		entry.SourceBaseURL = tree.WellKnown.BaseURL
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	if lock.global() {
+		entry.UpdatedAt = timestamp(env.now())
+	}
+	lock.put(key, entry)
+	return true
+}
+
+// wellKnownContent returns the materialized provider entry of a recorded skill name.
+func wellKnownContent(tree source.Tree, name string) (source.WellKnownContentSkill, bool) {
+	if tree.WellKnown == nil {
+		return source.WellKnownContentSkill{}, false
+	}
+	return tree.WellKnown.Entry(name)
 }
 
 // fetchedHash is the hash of the fetched skill folder in the shape the lock records: a content
@@ -729,6 +816,14 @@ func reinstallSkill(env Env, agentEnv agents.Environment, lock updateLock, t upd
 	if g.tree.Commit != "" {
 		updated.Commit = g.tree.Commit
 	}
+	if content, ok := wellKnownContent(g.tree, updateRecordedName(t.entry, t.key)); ok {
+		updated.WellKnownDigest = content.Digest
+		if g.tree.WellKnown != nil && g.tree.WellKnown.BaseURL != "" {
+			updated.Source = g.tree.WellKnown.BaseURL
+			updated.SourceBaseURL = g.tree.WellKnown.BaseURL
+			updated.SourceURL = ""
+		}
+	}
 	warning, err := refreshEntryHash(&updated, loc, lock.global())
 	if err != nil {
 		return UpdateResult{Name: t.key, Status: UpdateFailed, Reason: err.Error()}, false, ""
@@ -753,6 +848,10 @@ func refreshEntryHash(entry *updateRecord, installed string, global bool) (strin
 		entry.ComputedHash = digest
 		return "", nil
 	}
+	if entry.SourceType == string(source.KindWellKnown) {
+		entry.SkillFolderHash = ""
+		return "", nil
+	}
 	digest, warning, err := globalFolderHash(globalEntryFromUpdate(*entry), installed)
 	if err != nil {
 		return "", err
@@ -767,6 +866,7 @@ func globalEntryFromUpdate(e updateRecord) lockfile.GlobalEntry {
 		Source: e.Source, SourceType: e.SourceType, SourceURL: e.SourceURL, Ref: e.Ref,
 		Commit: e.Commit, SkillPath: e.SkillPath, SkillName: e.SkillName,
 		SkillFolderHash: e.SkillFolderHash, InstalledAt: e.InstalledAt, UpdatedAt: e.UpdatedAt,
+		SourceBaseURL: e.SourceBaseURL, WellKnownDigest: e.WellKnownDigest,
 	}
 }
 

@@ -1,5 +1,7 @@
 # Well-known providers
 
+- Status: Done
+
 - Intents: 20261119-well-known-sources
 - ADRs: 20261119-well-known-provider-contract
 

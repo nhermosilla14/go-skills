@@ -22,6 +22,9 @@ type Tree struct {
 	// only a direct download of a single SKILL.md is. It is empty otherwise, and discovery then
 	// derives the path.
 	SkillPath string
+	// WellKnown is set when the acquisition came from a host's well-known provider. It carries the
+	// per-skill digest and base URL the lock records.
+	WellKnown *WellKnownContent
 }
 
 // Command is one external command for a Runner.

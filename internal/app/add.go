@@ -106,17 +106,35 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		}
 		defer os.RemoveAll(tmp)
 	}
-	tree, err := source.Acquire(context.Background(), src, tmp)
-	if err != nil {
-		return Report{}, err
+	ctx := context.Background()
+	var wellKnown *source.WellKnown
+	if src.Kind == source.KindDownload {
+		wellKnown, err = source.ProbeWellKnown(ctx, src.Source, false)
+		if err != nil {
+			return Report{}, err
+		}
 	}
-	found, err := discover(tree.Dir, src, env.IncludeInternal, opts.FullDepth)
-	if err != nil {
-		return Report{}, err
+	var tree source.Tree
+	var found skill.Result
+	if wellKnown != nil {
+		found = skill.Result{Skills: wellKnown.List()}
+	} else {
+		tree, err = source.Acquire(ctx, src, tmp)
+		if err != nil {
+			return Report{}, err
+		}
+		found, err = discover(tree.Dir, src, env.IncludeInternal, opts.FullDepth)
+		if err != nil {
+			return Report{}, err
+		}
+	}
+	display := src.Display()
+	if wellKnown != nil {
+		display = wellKnown.BaseURL
 	}
 	rep := Report{
 		Warnings: found.Warnings,
-		Source:   src.Display(),
+		Source:   display,
 		Ref:      src.Ref,
 		Scope:    string(ScopeProject),
 	}
@@ -140,6 +158,12 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	chosen, err := chooseSkills(opts, tree, src, env.IncludeInternal, &found, requested, questions, answers)
 	if err != nil {
 		return rep, err
+	}
+	if wellKnown != nil {
+		tree, chosen, err = materializeWellKnown(ctx, wellKnown, tmp, chosen)
+		if err != nil {
+			return rep, err
+		}
 	}
 	rep.Warnings = found.Warnings
 	if err := validateRename(opts.Rename, chosen); err != nil {
@@ -193,6 +217,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 		root:       tree.Dir,
 		commit:     tree.Commit,
 		skillPath:  tree.SkillPath,
+		wellKnown:  tree.WellKnown,
 		entries:    entries,
 		results:    rep.Results,
 		hashes:     rep.Hashes,
@@ -208,7 +233,7 @@ func Add(opts AddOptions, env Env, prompters ...Prompter) (Report, error) {
 	if saved {
 		rep.LockPath = lockPath
 	}
-	if src.Kind == source.KindDownload && !src.Recordable() && saved {
+	if src.Kind == source.KindDownload && wellKnown == nil && !src.Recordable() && saved {
 		rep.Warnings = append(rep.Warnings, downloadNotRecorded(src, chosen))
 	}
 	if !global && len(selected) > 0 {
@@ -335,7 +360,7 @@ func chooseSkills(opts AddOptions, tree source.Tree, src source.Source, includeI
 		return selectByNames(found.Skills, answers.Skills)
 	}
 	chosen, err := selectSkills(found.Skills, requested)
-	if err != nil && !opts.FullDepth {
+	if err != nil && !opts.FullDepth && tree.WellKnown == nil {
 		// A requested skill may sit below discovery's normal depth, so retry once, as upstream does.
 		deeper, deeperErr := discover(tree.Dir, src, includeInternal, true)
 		if deeperErr == nil {
@@ -552,6 +577,7 @@ type recordInput struct {
 	root       string
 	commit     string
 	skillPath  string // SKILL.md path the acquisition knows, set by a single-file download
+	wellKnown  *source.WellKnownContent
 	entries    []install.Entry
 	results    []install.Result
 	hashes     map[string]string
@@ -619,8 +645,13 @@ func recordGlobal(lock *lockfile.GlobalFile, lockPath string, in recordInput) (b
 			*in.warnings = append(*in.warnings, warning)
 		}
 		entry.SkillFolderHash = digest
+		if in.wellKnown != nil {
+			// Upstream records an empty folder hash for well-known entries; the index digest and
+			// the project content hash carry the integrity information.
+			entry.SkillFolderHash = ""
+		}
 		if in.hashes != nil {
-			in.hashes[e.Name] = digest
+			in.hashes[e.Name] = entry.SkillFolderHash
 		}
 		lock.Put(e.Name, entry)
 		recorded = true
@@ -647,6 +678,13 @@ func globalLockEntry(in recordInput, e install.Entry, lock *lockfile.GlobalFile)
 	}
 	if in.source.Kind == source.KindLocal {
 		entry.Source = filepath.ToSlash(in.source.Source)
+	} else if in.wellKnown != nil {
+		base, digest, _ := wellKnownRecord(in, e)
+		entry.Source = base
+		entry.SourceType = string(source.KindWellKnown)
+		entry.SourceBaseURL = base
+		entry.WellKnownDigest = digest
+		entry.SkillPath = recordedSkillPath(in, e)
 	} else {
 		entry.Source = in.source.Source
 		entry.SourceType = lockSourceType(in.source.Kind)
@@ -728,6 +766,13 @@ func lockEntry(in recordInput, e install.Entry, digest string) lockfile.Entry {
 	if in.source.Kind == source.KindLocal {
 		entry.Source = localSource(in.project, in.root)
 		entry.SourceType = string(source.KindLocal)
+	} else if in.wellKnown != nil {
+		base, digest, _ := wellKnownRecord(in, e)
+		entry.Source = base
+		entry.SourceType = string(source.KindWellKnown)
+		entry.SourceBaseURL = base
+		entry.WellKnownDigest = digest
+		entry.SkillPath = recordedSkillPath(in, e)
 	} else {
 		entry.Source = in.source.Source
 		entry.SourceType = lockSourceType(in.source.Kind)
@@ -762,6 +807,42 @@ func recordedSkillPath(in recordInput, e install.Entry) string {
 		return in.skillPath
 	}
 	return e.Skill.SkillPath()
+}
+
+// wellKnownRecord returns the provider base URL and digest of one installed skill.
+func wellKnownRecord(in recordInput, e install.Entry) (string, string, bool) {
+	if in.wellKnown == nil {
+		return "", "", false
+	}
+	entry, ok := in.wellKnown.Entry(e.Skill.Name)
+	if !ok {
+		entry, ok = in.wellKnown.Entry(e.Skill.RelDir)
+	}
+	return in.wellKnown.BaseURL, entry.Digest, ok
+}
+
+// materializeWellKnown downloads only the selected index entries and points their skill metadata at
+// the materialized directories.
+func materializeWellKnown(ctx context.Context, idx *source.WellKnown, dir string,
+	chosen []skill.Skill) (source.Tree, []skill.Skill, error) {
+	names := make([]string, 0, len(chosen))
+	for _, s := range chosen {
+		names = append(names, s.Name)
+	}
+	tree, err := idx.Fetch(ctx, dir, names)
+	if err != nil {
+		return source.Tree{}, nil, err
+	}
+	for i := range chosen {
+		entry, ok := tree.WellKnown.Entry(chosen[i].Name)
+		if !ok {
+			return source.Tree{}, nil, fmt.Errorf("no skill named %q in source", chosen[i].Name)
+		}
+		chosen[i].Dir = entry.Dir
+		chosen[i].RelDir = entry.Rel
+		chosen[i].Description = entry.Description
+	}
+	return tree, chosen, nil
 }
 
 // lockSourceType maps a source kind to the lock vocabulary. Azure repositories are recorded as

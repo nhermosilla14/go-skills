@@ -25,6 +25,9 @@ const (
 	// KindDownload is a plain HTTP(S) URL that is not a git repository and serves a SKILL.md or an
 	// archive. The lock records it as "download".
 	KindDownload Kind = "download"
+	// KindWellKnown is the lock vocabulary of a skill served by a host's well-known index. It is
+	// never produced by Parse: the provider is discovered at fetch time for a download source.
+	KindWellKnown Kind = "well-known"
 )
 
 // Source is a parsed source argument.

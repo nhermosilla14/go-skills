@@ -31,6 +31,11 @@ func isTreeHash(s string) bool {
 // that cannot be verified counts as modified, like every other unverifiable entry.
 func globalStatus(key, dir string, entry lockfile.GlobalEntry) Status {
 	if entry.SkillFolderHash == "" {
+		// A well-known entry deliberately records an empty folder hash. There is nothing to compare
+		// against locally; check re-fetches the provider and compares the content instead.
+		if entry.SourceType == string(source.KindWellKnown) {
+			return StatusTracked
+		}
 		return StatusModified
 	}
 	if isTreeHash(entry.SkillFolderHash) && entry.SourceType == string(source.KindGitHub) {

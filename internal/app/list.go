@@ -111,14 +111,16 @@ func scopeName(global bool) string {
 // lockRef is the lock information list and removal display and update checking need, independent
 // of the lock version.
 type lockRef struct {
-	Source     string
-	SourceURL  string
-	SourceType string
-	SkillName  string
-	Ref        string
-	Commit     string
-	SkillPath  string
-	Hash       string // content hash of a project entry, folder hash of a global one
+	Source          string
+	SourceURL       string
+	SourceType      string
+	SkillName       string
+	Ref             string
+	Commit          string
+	SkillPath       string
+	SourceBaseURL   string
+	WellKnownDigest string
+	Hash            string // content hash of a project entry, folder hash of a global one
 }
 
 // missingSkill is a lock key with no directory on disk.
@@ -370,14 +372,16 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 			c.Status = compareHash(s.Dir, entry)
 			c.Subagents = entry.Subagents
 			c.Ref = lockRef{
-				Source:     entry.Source,
-				SourceURL:  entry.SourceURL,
-				SourceType: entry.SourceType,
-				SkillName:  entry.SkillName,
-				Ref:        entry.Ref,
-				Commit:     entry.Commit,
-				SkillPath:  entry.SkillPath,
-				Hash:       entry.ComputedHash,
+				Source:          entry.Source,
+				SourceURL:       entry.SourceURL,
+				SourceType:      entry.SourceType,
+				SkillName:       entry.SkillName,
+				Ref:             entry.Ref,
+				Commit:          entry.Commit,
+				SkillPath:       entry.SkillPath,
+				SourceBaseURL:   entry.SourceBaseURL,
+				WellKnownDigest: entry.WellKnownDigest,
+				Hash:            entry.ComputedHash,
 			}
 		}
 		matched = append(matched, c)
@@ -393,6 +397,7 @@ func compareLock(lock *lockfile.File, installed []installedSkill) ([]comparedSki
 			Source: entry.Source, SourceURL: entry.SourceURL,
 			SourceType: entry.SourceType, SkillName: entry.SkillName,
 			SkillPath: entry.SkillPath, Hash: entry.ComputedHash,
+			SourceBaseURL: entry.SourceBaseURL, WellKnownDigest: entry.WellKnownDigest,
 		}})
 	}
 	return matched, missing
@@ -448,14 +453,16 @@ func compareGlobalLock(lock *lockfile.GlobalFile, installed []installedSkill) ([
 // globalRef is the display-facing subset of a global entry.
 func globalRef(entry lockfile.GlobalEntry) lockRef {
 	return lockRef{
-		Source:     entry.Source,
-		SourceURL:  entry.SourceURL,
-		SourceType: entry.SourceType,
-		SkillName:  entry.SkillName,
-		Ref:        entry.Ref,
-		Commit:     entry.Commit,
-		SkillPath:  entry.SkillPath,
-		Hash:       entry.SkillFolderHash,
+		Source:          entry.Source,
+		SourceURL:       entry.SourceURL,
+		SourceType:      entry.SourceType,
+		SkillName:       entry.SkillName,
+		Ref:             entry.Ref,
+		Commit:          entry.Commit,
+		SkillPath:       entry.SkillPath,
+		SourceBaseURL:   entry.SourceBaseURL,
+		WellKnownDigest: entry.WellKnownDigest,
+		Hash:            entry.SkillFolderHash,
 	}
 }
 

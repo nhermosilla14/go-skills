@@ -24,16 +24,18 @@ const legacyVersion = 1
 
 // Entry describes one installed skill. Unknown fields are kept in extra and written back.
 type Entry struct {
-	Source       string
-	SourceURL    string
-	Ref          string
-	Commit       string
-	SourceType   string
-	SkillPath    string
-	ComputedHash string
-	SkillName    string
-	Subagents    []string // Eve placement: "" is the root agent
-	InstallMode  string
+	Source          string
+	SourceURL       string
+	Ref             string
+	Commit          string
+	SourceType      string
+	SkillPath       string
+	ComputedHash    string
+	SkillName       string
+	Subagents       []string // Eve placement: "" is the root agent
+	InstallMode     string
+	SourceBaseURL   string
+	WellKnownDigest string
 
 	extra map[string]json.RawMessage
 }
@@ -151,7 +153,8 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 
 var entryKeys = []string{
 	"source", "sourceUrl", "ref", "commit", "sourceType", "skillPath", "computedHash",
-	"skillName", "subagents", "installMode", "installedAt", "updatedAt",
+	"skillName", "subagents", "installMode", "installedAt", "updatedAt", "sourceBaseUrl",
+	"wellKnownDigest",
 }
 
 // compactAll compacts the raw values so that rewriting them is stable, and returns nil for none.

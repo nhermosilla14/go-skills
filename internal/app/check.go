@@ -91,7 +91,7 @@ func Check(ctx context.Context, opts CheckOptions, env Env) (CheckReport, error)
 		if status == StatusModified {
 			report.Modified = append(report.Modified, key)
 		}
-		update, err := checkUpdate(ctx, key, ref, opts.Runner, env.IncludeInternal)
+		update, err := checkUpdate(ctx, key, ref, opts.Runner, env.IncludeInternal, agentEnv, opts.Global)
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", key, err))
 			continue
@@ -159,14 +159,16 @@ func dirExists(canonicalDir, key string) bool {
 // refOf is the fetch information a project lock entry carries.
 func refOf(entry lockfile.Entry) lockRef {
 	return lockRef{
-		Source:     entry.Source,
-		SourceURL:  entry.SourceURL,
-		SourceType: entry.SourceType,
-		SkillName:  entry.SkillName,
-		Ref:        entry.Ref,
-		Commit:     entry.Commit,
-		SkillPath:  entry.SkillPath,
-		Hash:       entry.ComputedHash,
+		Source:          entry.Source,
+		SourceURL:       entry.SourceURL,
+		SourceType:      entry.SourceType,
+		SkillName:       entry.SkillName,
+		Ref:             entry.Ref,
+		Commit:          entry.Commit,
+		SkillPath:       entry.SkillPath,
+		SourceBaseURL:   entry.SourceBaseURL,
+		WellKnownDigest: entry.WellKnownDigest,
+		Hash:            entry.ComputedHash,
 	}
 }
 
@@ -196,13 +198,15 @@ func selectCheckKeys(keys []string, names []string) (map[string]bool, []string) 
 // Local sources never have updates, and a source type this build cannot fetch is reported as
 // uncheckable.
 func checkUpdate(ctx context.Context, key string, entry lockRef, runner source.Runner,
-	includeInternal bool) (bool, error) {
+	includeInternal bool, agentEnv agents.Environment, global bool) (bool, error) {
 	switch entry.SourceType {
 	case "local":
 		return false, nil
 	case "github", "gitlab", "git":
 	case "download":
 		return checkDownloadUpdate(ctx, key, entry, includeInternal)
+	case "well-known":
+		return checkWellKnownUpdate(ctx, key, entry, agentEnv, global)
 	case "":
 		return false, fmt.Errorf("the lock entry has no source type")
 	default:
@@ -264,4 +268,60 @@ func checkDownloadUpdate(ctx context.Context, key string, entry lockRef, include
 		return false, err
 	}
 	return !strings.EqualFold(digest, entry.Hash), nil
+}
+
+// checkWellKnownUpdate re-probes a provider, re-verifies its digest and compares the fetched
+// content with the lock. An unreachable provider or a digest mismatch is a failure.
+func checkWellKnownUpdate(ctx context.Context, key string, entry lockRef,
+	agentEnv agents.Environment, global bool) (bool, error) {
+	raw := entry.SourceBaseURL
+	if raw == "" {
+		raw = entry.Source
+	}
+	if raw == "" {
+		return false, errors.New("no source recorded")
+	}
+	idx, err := source.ProbeWellKnown(ctx, raw, true)
+	if err != nil {
+		return false, err
+	}
+	if idx == nil {
+		return false, fmt.Errorf("no well-known index found at %s", raw)
+	}
+	dir, err := os.MkdirTemp("", "skills-check-*")
+	if err != nil {
+		return false, fmt.Errorf("creating a temporary directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	name := updateRecordedName(updateRecord{SkillName: entry.SkillName}, key)
+	tree, err := idx.Fetch(ctx, dir, []string{name})
+	if err != nil {
+		return false, err
+	}
+	fetched, located, ok := locateUpdateSkill(tree.WellKnown.Skills(), name, entry.SkillPath)
+	if !ok {
+		return false, errors.New(located.Reason)
+	}
+	digest, err := hash.Dir(fetched.Dir)
+	if err != nil {
+		return false, err
+	}
+	recorded := entry.Hash
+	if recorded == "" {
+		recorded, err = installedContentHash(agentEnv, key, global)
+		if err != nil {
+			return false, nil // a missing copy is reported as Missing, not as an update
+		}
+	}
+	return !strings.EqualFold(digest, recorded), nil
+}
+
+// installedContentHash is the content hash of a skill's first installed copy. It is what check
+// compares a well-known global entry against, whose folder hash is deliberately empty.
+func installedContentHash(env agents.Environment, key string, global bool) (string, error) {
+	installed := skill.SanitizeName(key)
+	for _, a := range installedAgents(env, installed, global) {
+		return hashInstalled(agentSkillPath(a, env, installed, global))
+	}
+	return "", errors.New("not installed")
 }

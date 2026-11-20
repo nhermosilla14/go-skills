@@ -114,12 +114,15 @@ type restoreTask struct {
 // restoreGroup is one fetch URL, pinned commit and install mode, acquired once for every entry it
 // tracks.
 type restoreGroup struct {
-	source   string // fetch URL as reported, with credentials removed
-	fetchURL string // fetch URL as recorded in the lock
-	commit   string
-	dir      string
-	found    skill.Result
-	err      string
+	source    string // fetch URL as reported, with credentials removed
+	fetchURL  string // fetch URL as recorded in the lock
+	commit    string
+	wellKnown bool
+	names     []string
+	dir       string
+	tree      source.Tree
+	found     skill.Result
+	err       string
 }
 
 // Restore rebuilds the project from skills-lock.json without prompting. Git entries are fetched at
@@ -374,16 +377,18 @@ func planRestore(lock *lockfile.File, rep *RestoreReport) ([]restoreTask, []*res
 		if entry.InstallMode == "copy" || evePlaced(entry.Subagents) {
 			mode = install.ModeCopy
 		}
-		groupKey := fetch + "\x00" + entry.Commit + "\x00" + string(mode)
+		groupKey := fetch + "\x00" + entry.Commit + "\x00" + string(mode) + "\x00" + entry.SourceType
 		index, ok := groupIndex[groupKey]
 		if !ok {
 			index = len(groups)
 			groupIndex[groupKey] = index
 			groups = append(groups, &restoreGroup{
 				source: source.RedactCredentials(fetch), fetchURL: fetch,
-				commit: entry.Commit,
+				commit: entry.Commit, wellKnown: entry.SourceType == "well-known",
 			})
 		}
+		groups[index].names = append(groups[index].names,
+			updateRecordedName(updateRecord{SkillName: entry.SkillName}, key))
 		tasks = append(tasks, restoreTask{key: key, entry: entry, mode: mode, group: index})
 	}
 	return tasks, groups
@@ -397,7 +402,13 @@ func unrestorableReason(e lockfile.Entry) string {
 	case "local":
 		return "Local paths are not restored from the lock; install them with skills add <source>"
 	case "well-known":
-		return "Well-known skills cannot be restored automatically"
+		if e.SourceBaseURL == "" && e.Source == "" {
+			return "No source recorded"
+		}
+		if e.SkillPath == "" {
+			return "No skill path recorded"
+		}
+		return ""
 	case "node_modules":
 		return "node_modules skills come from syncing the package, not from the lock"
 	case "":
@@ -410,6 +421,9 @@ func unrestorableReason(e lockfile.Entry) string {
 // restoreFetchSource is the location a lock entry is fetched from: the recorded fetch URL when
 // present, the shorthand otherwise.
 func restoreFetchSource(e lockfile.Entry) string {
+	if e.SourceType == "well-known" && e.SourceBaseURL != "" {
+		return e.SourceBaseURL
+	}
 	if e.SourceURL != "" {
 		return e.SourceURL
 	}
@@ -428,6 +442,14 @@ func acquireRestoreGroups(groups []*restoreGroup, env Env, runner source.Runner,
 // fetchRestoreGroup clones the group source at its pinned commit and discovers its skills. The
 // temporary tree is kept until the run ends so every entry of the group shares it.
 func fetchRestoreGroup(g *restoreGroup, env Env, runner source.Runner) string {
+	dir, err := os.MkdirTemp("", "skills-restore-*")
+	if err != nil {
+		return fmt.Sprintf("creating a temporary directory: %v", err)
+	}
+	g.dir = dir
+	if g.wellKnown {
+		return fetchWellKnownRestoreGroup(g, dir)
+	}
 	src, err := source.Parse(g.fetchURL)
 	if err != nil {
 		return err.Error()
@@ -435,11 +457,6 @@ func fetchRestoreGroup(g *restoreGroup, env Env, runner source.Runner) string {
 	if g.commit != "" {
 		src.Ref = g.commit
 	}
-	dir, err := os.MkdirTemp("", "skills-restore-*")
-	if err != nil {
-		return fmt.Sprintf("creating a temporary directory: %v", err)
-	}
-	g.dir = dir
 	tree, err := acquireUpdateTree(context.Background(), src, dir, runner)
 	if err != nil {
 		return err.Error()
@@ -449,6 +466,24 @@ func fetchRestoreGroup(g *restoreGroup, env Env, runner source.Runner) string {
 		return err.Error()
 	}
 	g.found = found
+	return ""
+}
+
+// fetchWellKnownRestoreGroup re-fetches the locked skills through the provider, verifying digests.
+func fetchWellKnownRestoreGroup(g *restoreGroup, dir string) string {
+	idx, err := source.ProbeWellKnown(context.Background(), g.fetchURL, false)
+	if err != nil {
+		return err.Error()
+	}
+	if idx == nil {
+		return fmt.Sprintf("no well-known index found at %s", g.source)
+	}
+	tree, err := idx.Fetch(context.Background(), dir, g.names)
+	if err != nil {
+		return err.Error()
+	}
+	g.tree = tree
+	g.found = skill.Result{Skills: tree.WellKnown.Skills()}
 	return ""
 }
 
@@ -502,12 +537,27 @@ func restoreSkill(env Env, agentEnv agents.Environment, targets []agents.Agent, 
 		return RestoreResult{Name: t.key, Status: RestoreFailed,
 			Reason: "hashing the install: " + err.Error()}, false
 	}
-	if digest == t.entry.ComputedHash {
-		return RestoreResult{Name: t.key, Status: RestoreRestored}, false
+	changed := false
+	if digest != t.entry.ComputedHash {
+		t.entry.ComputedHash = digest
+		changed = true
 	}
-	t.entry.ComputedHash = digest
-	lock.Put(t.key, t.entry)
-	return RestoreResult{Name: t.key, Status: RestoreRestored}, true
+	if content, ok := wellKnownContent(g.tree, updateRecordedName(updateRecord{SkillName: t.entry.SkillName}, t.key)); ok {
+		if content.Digest != "" && !strings.EqualFold(content.Digest, t.entry.WellKnownDigest) {
+			t.entry.WellKnownDigest = content.Digest
+			changed = true
+		}
+		if g.tree.WellKnown != nil && g.tree.WellKnown.BaseURL != "" &&
+			t.entry.SourceBaseURL != g.tree.WellKnown.BaseURL {
+			t.entry.SourceBaseURL = g.tree.WellKnown.BaseURL
+			t.entry.Source = g.tree.WellKnown.BaseURL
+			changed = true
+		}
+	}
+	if changed {
+		lock.Put(t.key, t.entry)
+	}
+	return RestoreResult{Name: t.key, Status: RestoreRestored}, changed
 }
 
 // repairRestoreLinks points missing agent targets at the canonical copy of a skill whose content

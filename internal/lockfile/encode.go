@@ -55,6 +55,8 @@ func (e Entry) members() []member {
 	if len(e.Subagents) > 0 {
 		ms = append(ms, member{"subagents", array(e.Subagents)})
 	}
+	add("sourceBaseUrl", e.SourceBaseURL, false)
+	add("wellKnownDigest", e.WellKnownDigest, false)
 	add("installMode", e.InstallMode, false)
 	for _, k := range sortedKeys(e.extra) {
 		ms = append(ms, member{k, string(e.extra[k])})

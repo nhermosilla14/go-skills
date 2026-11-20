@@ -117,16 +117,18 @@ type lockDoc struct {
 }
 
 type lockEntry struct {
-	Source       string   `json:"source"`
-	SourceURL    string   `json:"sourceUrl"`
-	SourceType   string   `json:"sourceType"`
-	Ref          string   `json:"ref"`
-	Commit       string   `json:"commit"`
-	SkillPath    string   `json:"skillPath"`
-	SkillName    string   `json:"skillName"`
-	Subagents    []string `json:"subagents"`
-	ComputedHash string   `json:"computedHash"`
-	InstallMode  string   `json:"installMode"`
+	Source          string   `json:"source"`
+	SourceURL       string   `json:"sourceUrl"`
+	SourceType      string   `json:"sourceType"`
+	Ref             string   `json:"ref"`
+	Commit          string   `json:"commit"`
+	SkillPath       string   `json:"skillPath"`
+	SkillName       string   `json:"skillName"`
+	Subagents       []string `json:"subagents"`
+	ComputedHash    string   `json:"computedHash"`
+	SourceBaseURL   string   `json:"sourceBaseUrl"`
+	WellKnownDigest string   `json:"wellKnownDigest"`
+	InstallMode     string   `json:"installMode"`
 }
 
 // oracleHash is an independent implementation of the content hash contract, written from the
