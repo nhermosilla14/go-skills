@@ -40,7 +40,7 @@ offers root plus subagents when `agent/subagents/` exists, `--subagent` accepts 
 without validating them, and the lock records the placement. Update re-applies it, remove deletes
 exactly those files, and list shows it. Global scope rejects Eve and its subagents.
 - Criteria: paths, sorting, prompt, lock field, update/remove/list behaviour.
-- Tests: TestEveSubagentsSorted, TestPlanEveSubagentTargets, TestE2EEveSubagents, TestE2ERestoreEveFlat
+- Tests: TestEveSubagentsSortsDirectories, TestPlanEveSubagentTargets, TestE2EEveSubagents, TestE2ERestoreEveFlat
 
 ### Listing during add
 `add --list` prints every discovered skill and installs nothing, ignoring `--skill` (upstream
@@ -55,7 +55,14 @@ notice; Eve fails with its documented error. Global installs never write the pro
 - Criteria: placement matches the registry; no project lock appears.
 - Tests: TestGlobalAddWritesOnlyTheGlobalLock, TestE2EGlobalScopeRoundTrip, TestE2EGlobalProjectOnlyAgentsFails
 
+### Root-level skill payload
+A skill discovered at the root of an acquisition is one skill. The clone path installs the whole
+directory; the GitHub API fast path installs only `SKILL.md`, matching upstream's documented
+exception. Every other skill installs its full folder on both paths.
+- Criteria: the API path trims a root skill, the clone path keeps the folder, subpath skills keep
+  their full folder.
+- Tests: TestBlobAcquireRootSkillKeepsOnlySkillMD, TestE2EBlobRootSkill, TestBlobAcquireSequenceAndFiles, TestE2EBlobInstallMatchesClone
+
 ## Not supported
 
-- The GitHub blob fast path and its root-skill trimming.
 - Transactional rollback of a partially applied plan.

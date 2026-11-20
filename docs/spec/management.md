@@ -16,11 +16,13 @@ and is not internal. Status comes from the scope's lock: `tracked` (hash matches
 
 ### check
 Reports local changes and available updates without writing. Git sources compare the lock commit
-with the remote head of the recorded ref; local sources are never outdated; an unreachable source is
-a failure. Eve placements are compared through their recorded flat files when the canonical
-directory is absent. Exit 1 when any update, local change or failure exists.
-- Criteria: all outcomes, clean summary, exit codes, Eve flat handling.
-- Tests: TestCheckUpToDate, TestCheckReportsAnUpdate, TestCheckReportsLocalChanges, TestCheckUnreachableSourceIsAFailure, TestCheckEveFlat, TestE2ECheckReportsGitUpdates
+with the remote head of the recorded ref; downloads are re-fetched and compared by content hash;
+well-known entries re-probe the provider and compare the index digest; Notion pages and packs are
+re-exported through `ntn`. Local sources are never outdated; an unreachable source is a failure.
+Eve placements are compared through their recorded flat files when the canonical directory is
+absent. Exit 1 when any update, local change or failure exists.
+- Criteria: all outcomes, clean summary, exit codes, Eve flat handling, per-source refresh.
+- Tests: TestCheckUpToDate, TestCheckReportsAnUpdate, TestCheckReportsLocalChanges, TestCheckUnreachableSourceIsAFailure, TestCheckReadsEveFlatInstall, TestCheckDownloadReportsChangedContent, TestCheckWellKnownReportsChangedContent, TestNotionPageAddCheckUpdateRestore, TestE2ECheckReportsGitUpdates, TestE2ENotionUpdate
 
 ### remove
 Selects by name, sanitized name, exact lock source, `--skill '*'` or `--all`. Removes from the
@@ -35,12 +37,15 @@ exactly as recorded.
 
 ### update
 Groups lock entries by fetch URL and ref, acquires each group once, and reinstalls when content
-changed, the folder is missing or the path moved. Install mode, renamed names and Eve subagent
-placements are preserved; ambiguous relocation is skipped; the lock records the new hash, commit and
-path atomically. Local entries are reported as not automatically updatable. Unreachable sources count
-as failures.
-- Criteria: unchanged, changed, missing, moved, renamed, copy-mode, Eve, failure and filter cases.
-- Tests: TestUpdateUnchangedSkillIsCurrent, TestUpdateReinstallsChangedContent, TestUpdateFollowsARelocatedSkill, TestUpdateKeepsARenamedSkill, TestUpdatePreservesCopyMode, TestUpdateUnreachableSourceIsAFailure, TestE2EUpdateRoundTrip
+changed, the folder is missing or the path moved. Downloads are re-fetched from the recorded URL;
+well-known entries re-probe the provider and compare the digest; Notion pages and packs are
+re-exported. Install mode, renamed names and Eve subagent placements are preserved; ambiguous
+relocation is skipped; the lock records the new hash, commit and path atomically. Local entries and
+entries without a recorded source are reported as not automatically updatable. Unreachable sources
+count as failures.
+- Criteria: unchanged, changed, missing, moved, renamed, copy-mode, Eve, failure and filter cases;
+  per-source refresh and uncheckable reasons.
+- Tests: TestUpdateUnchangedSkillIsCurrent, TestUpdateReinstallsChangedContent, TestUpdateFollowsARelocatedSkill, TestUpdateKeepsARenamedSkill, TestUpdatePreservesCopyMode, TestUpdateUnreachableSourceIsAFailure, TestUpdateDownloadReinstallsChangedContent, TestUpdateDownloadKeepsUnchangedContent, TestUpdateDownloadReinstallsAMissingFolder, TestUpdateWellKnownReinstallsChangedContent, TestUpdateWellKnownUnreachableProviderFails, TestNotionPageAddCheckUpdateRestore, TestNotionPackSelectionAndLock, TestE2EUpdateRoundTrip, TestE2ENotionUpdate
 
 ### update scope
 Names with no `-g`/`-p` run the global phase then the project phase, each with its own header;
@@ -48,17 +53,20 @@ Names with no `-g`/`-p` run the global phase then the project phase, each with i
 `Global` and `Both`; `-y`/non-TTY chooses project when the project has skills, else global. Failures
 are counted per phase and exit 1 if either failed.
 - Criteria: both order and headers, picker, fallbacks, per-phase failures.
-- Tests: TestUpdateScopeSelection, TestE2EUpdateBothScopes, TestE2EUpdateScopeAndNames
+- Tests: TestUpdateScopePrompt, TestUpdateScopePromptBoth, TestE2EUpdateBothScopes, TestE2EUpdateScopeAndNames
 
 ### restore
 `install`/`i` without a source (and `experimental_install`) rebuild the project from
 `skills-lock.json`: entries are grouped by source and recorded commit, fetched at that commit, and
-installed with the recorded mode and Eve placement. Entries whose content matches `computedHash` are
-kept and only missing links are repaired. `--force` reinstalls; `--dry-run` reports without writing.
+installed with the recorded mode and Eve placement. Downloads are re-fetched from their URL,
+well-known entries re-probe their provider, and Notion pages and packs are re-exported through `ntn`;
+local paths are not restored. Entries whose content matches `computedHash` are kept and only missing
+links are repaired. `--force` reinstalls; `--dry-run` reports without writing.
 Agent targets follow `-a`, then the global `lastSelectedAgents`, then detection, then canonical only.
 Restore never prompts and never touches the global lock.
-- Criteria: pinned restore, skip/relink, copy mode, renamed skills, Eve flat files, source isolation.
-- Tests: TestRestoreGroupsBySourceAndCommit, TestRestoreSkipsMatchingContent, TestRestoreForces, TestRestoreAgentFallback, TestE2ERestoreFromLock, TestE2ERestoreEveFlat
+- Criteria: pinned restore, skip/relink, copy mode, renamed skills, Eve flat files, source isolation,
+  per-source re-fetch.
+- Tests: TestRestoreGroupsBySourceAndCommit, TestRestoreSkipsMatchingContentAndKeepsTheLock, TestRestoreForceReinstalls, TestRestoreAgentFallback, TestRestoreDownloadsAgain, TestRestoreUnreachableDownloadFails, TestRestoreWellKnownRefetches, TestNotionPageAddCheckUpdateRestore, TestE2ERestoreFromLock, TestE2ERestoreEveFlat
 
 ### frozen lock file
 `--frozen-lockfile` (default when any of `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
@@ -68,7 +76,7 @@ skill the source no longer provides, or a migrated v1 entry with an empty hash. 
 overrides the CI default; `--frozen-lockfile` always wins. Non-frozen restore repairs empty hashes and
 records them.
 - Criteria: each failure case, nothing written, v1 message, overrides, dry-run validation.
-- Tests: TestFrozenCIDetection, TestFrozenRefusesDrift, TestFrozenV1EmptyHash, TestE2ERestoreFrozen
+- Tests: TestFrozenRestoreEnvironmentTable, TestFrozenRestoreFailures, TestFrozenRestoreV1EmptyHash, TestE2ERestoreFrozen
 
 ### Global scope
 `-g` uses the global directories and `.skill-lock.json`; project scope uses the project lock. The
@@ -82,5 +90,5 @@ written for both scopes.
 
 - Global restore (upstream restore is project-only).
 - Prompted deletion of skills that disappeared upstream.
-- Updating download, well-known and `node_modules` entries.
-- Rebuilding an installation from a lock with `node_modules` entries.
+- Updating or restoring a lock entry with no recorded source, or `node_modules` entries.
+- Rebuilding an installation from local paths; they are installed with `add`.

@@ -1,6 +1,6 @@
 # Source acquisition: clone-first, no blob fast path
 
-- Status: Accepted
+- Status: Superseded by 20261119-github-blob-fast-path
 - Date: 2026-11-19
 - Deciders: Nicolás Hermosilla P.
 - Approved by: Nicolás Hermosilla P.

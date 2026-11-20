@@ -81,7 +81,7 @@ from; the spec grows as slices deliver.
 | Behavior | Reference |
 |---|---|
 | `add` with its flag set, prompt order, scope choice, install methods and overwrite rules | `olddocs/behavior/01-add-and-install.md` |
-| Source grammar and precedence: GitHub shorthand, refs, URLs, Azure DevOps, GitLab, SSH, local paths, archives, direct downloads, well-known hosts | `olddocs/behavior/02-sources-and-fetching.md` |
+| Source grammar and precedence: GitHub shorthand, refs, URLs, Azure DevOps, GitLab, SSH, local paths, archives, direct downloads, well-known hosts, Notion pages and packs | `olddocs/behavior/02-sources-and-fetching.md` |
 | Project lock (`skills-lock.json` v2) schema, content hash, v1 migration, atomic writes | `olddocs/behavior/03-lockfile-and-hashing.md` |
 | `list`, `remove`, `update`, `check`, `use`, `find`, `init` and their documented options and output formats | `olddocs/behavior/04-cli-commands.md` |
 | The agent registry (79 ids), project/global paths, `stat`-based detection, canonical `.agents/skills` linking, Eve special cases | `olddocs/behavior/05-agents-and-paths.md` |
@@ -106,7 +106,6 @@ Each item is an upstream defect or ambiguity being corrected; an ADR records the
 | Global lock | Written atomically like the project lock; a corrupt lock is reported, not silently replaced. |
 | Windows | Reserved device names and case-insensitive path containment are handled safely. |
 | `use --help` | Prints `use`'s own help. |
-| Blob fast path | Dropped in favour of clone-only; installing from GitHub requires git. |
 
 ### Dropped
 
@@ -123,3 +122,4 @@ Each item is an upstream defect or ambiguity being corrected; an ADR records the
 | Deterministic output and a documented exit-code table | Scripted use on CI is a primary use case. |
 | `skills --version` reporting version, commit and build date | Reproducible bug reports for binaries without a package manager. |
 | Clear "not supported" stubs for the dropped experimental commands | Fail loudly instead of pretending to work. |
+| GitHub API fast path with clone fallback | Public GitHub sources install without `git`; the clone path remains the safety net. |

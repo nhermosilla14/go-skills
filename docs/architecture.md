@@ -1,9 +1,10 @@
 # Architecture
 
-Status: slice 01 delivered. The CLI shell, local `add`, skill discovery, the content hash, the
-project lock and the two-agent install path exist. The diagram and the package list below include
-the planned shape of later slices and are updated as they land. For the forces behind the project
-see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
+Status: all planned slices delivered. The CLI, local and git installs, the GitHub API fast path,
+direct downloads and archives, well-known providers, Notion through `ntn`, discovery, the content
+hash, both locks, update/check/remove/restore/use/find/init and the eight-target release pipeline
+exist. The diagram and the package list below describe the delivered shape. For the forces behind the
+project see `docs/vision.md`; for decisions see `docs/adr/`.
 
 ## Shape
 
@@ -25,7 +26,8 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
              │               │            │
         ┌────▼──────┐   ┌────▼─────┐  ┌───▼──────────┐
         │ git/gh    │   │ paths    │  │ lock + hash  │
-        │ http/tar  │   │ per OS   │  │ skills-lock  │
+        │ API · http│   │ per OS   │  │ skills-lock  │
+        │ tar · ntn │   │          │  │              │
         └───────────┘   └──────────┘  └──────────────┘
 ```
 
@@ -38,23 +40,23 @@ see `docs/vision.md`; for decisions see `docs/adr/` and `docs/branch/adr/`.
 | `internal/app` | Use cases (`Add`, `Restore`, `List`, `Check`, `Remove`, `Update`, `Use`, `Init`, `Find` support), prompts and the `Prompter` seam; no command syntax. | delivered |
 | `internal/skill` | `SKILL.md` parsing and rewrite, discovery (containers, fallback, plugin manifests, `skills.sh.json`), sanitization, name matching. | delivered |
 | `internal/agents` | The 79-agent registry, injected-environment path resolution, `stat` detection, universal-target expansion. | delivered |
-| `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | partial |
-| `internal/lockfile` | Project lock v2 and global lock v3, v1 migration, atomic writes, unknown-field preservation. | delivered |
-| `internal/hash` | Content hash contract and vectors. Git tree hash is planned. | partial |
+| `internal/install` | Plan and apply: canonical copy, relative links or Windows junctions with copy fallback, copies, skips, Eve flat files, installed-name rewrite. | delivered |
+| `internal/lockfile` | Project lock v2 and global lock v3, source-specific entries, v1 migration, atomic writes, unknown-field preservation. | delivered |
+| `internal/hash` | Content hash contract and vectors, Git tree hash for the global lock. | delivered |
 | `internal/fsutil` | Atomic writes, realpath containment, guarded removal. | delivered |
-| `internal/source` | Source grammar, git acquisition and remote ref lookup, authentication ladder, temporary workspaces. | delivered |
+| `internal/source` | Source grammar; git acquisition and remote ref lookup, GitHub API fast path, downloads and archives, well-known providers, Notion through `ntn`, temporary workspaces. | delivered |
 | `internal/search` | skills.sh search client, defensive parsing, partial-match fan-out. | delivered |
-| `e2e/` | Built-binary tests with their fixtures. | partial |
+| `e2e/` | Built-binary tests with their fixtures. | delivered |
 
 Build and release: GoReleaser cross-compiles the eight targets from one commit with version
 metadata injected through `-ldflags`; CI runs tests on Linux, macOS and Windows, lints, and
 cross-compiles every target. The Taskfile wraps the same commands.
 
-The clock seam is `app.Env.Now`, the process seam is `source.Runner` (git/`gh` execution), and the
-prompt seam is `app.Prompter` (real TUI, scripted answers for tests, no-prompt refusal), and the
-host-agent seam is `agents.DetectHost` over the injected environment. The
-filesystem is real (temporary directories) rather than virtual. `cmd/skills` wires the production
-implementations and owns the process streams.
+The clock seam is `app.Env.Now`, the process seam is `source.Runner` (git and `gh` execution;
+`ntn` has its own command seam), and the prompt seam is `app.Prompter` (real TUI, scripted answers
+for tests, no-prompt refusal), and the host-agent seam is `agents.DetectHost` over the injected
+environment. The filesystem is real (temporary directories) rather than virtual. `cmd/skills` wires
+the production implementations and owns the process streams.
 
 Interfaces are defined when the first slice needs them, not up front. Network, git and clock
 access sit behind small interfaces so tests run offline.

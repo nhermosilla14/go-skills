@@ -4,13 +4,13 @@ One file per functional area. Entries describe **delivered** behavior.
 
 | Area | File | Delivered |
 |---|---|---|
-| cli | `cli.md` | Command surface, parsing, interactive flow, streams, JSON, exit codes |
-| sources | `sources.md` | Source grammar, acquisition, authentication, remote ref lookup |
+| cli | `cli.md` | Command surface, parsing, interactive flow, streams, JSON, unsupported stubs, exit codes |
+| sources | `sources.md` | Source grammar, git clone and API acquisition, downloads, archives, well-known providers, Notion, authentication |
 | discovery | `discovery.md` | Skill contract, containers, manifests, duplicates, rename |
-| install | `install.md` | Plan/apply, link and copy modes, agent targets, global placement |
+| install | `install.md` | Plan/apply, link and copy modes, agent targets, root payload, global placement |
 | agents | `agents.md` | Registry, path resolution, detection, selection |
-| lockfile | `lockfile.md` | Project and global locks, content hash, v1 migration |
-| management | `management.md` | `list`, `check`, `remove`, `update`, both scopes |
+| lockfile | `lockfile.md` | Project and global locks, source-specific entries, content hash, v1 migration |
+| management | `management.md` | `list`, `check`, `remove`, `update`, restore, both scopes |
 | release | `release.md` | Targets, metadata, artifacts, CI |
 
 Conventions for each area file:

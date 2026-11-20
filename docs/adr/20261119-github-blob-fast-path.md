@@ -5,6 +5,7 @@
 - Deciders: Nicolás Hermosilla P.
 - Approved by: Nicolás Hermosilla P.
 - Spec area: `sources`
+- Replaces: 20261119-source-acquisition-clone-first
 
 ## Context
 

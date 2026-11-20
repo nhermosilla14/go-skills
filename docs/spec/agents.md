@@ -35,7 +35,7 @@ Replit and `AI_AGENT`. The mapping is a data table evaluated once; unmapped name
 detection. Detection makes `add`/`remove`/`find` non-interactive, targets the host plus the universal
 set in `add` unless `-a` is given, and permits `--json` without `-y`.
 - Criteria: one test per marker, Cursor demotion, fallback, host target set.
-- Tests: TestDetectHostMarkers, TestDetectHostCursorDemoted, TestDetectHostUnmappedFallsBack, TestAddHostTargets
+- Tests: TestDetectHostTableRowPerMarker, TestDetectHostCursorDemotion, TestDetectHostUnmappedHostFallsBack, TestAddHostModeTargetsTheHostAgent
 
 ### Global directories
 Every command resolves an agent's global directory through the same `BaseDir` resolver, so legacy

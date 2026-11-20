@@ -8,15 +8,19 @@ scope behind the project.
 
 ## Status
 
-Early development. There is no tagged release yet. `add` works for local directories and all 79
-agents, writes a v2 `skills-lock.json`, and implements the content-hash contract; the release
-pipeline builds every supported platform. Everything else is marked `TODO` and arrives slice by
-slice; see `docs/branch/slices/` for the plan and `docs/spec/` for what is delivered.
+Early development. There is no tagged release yet. `add` installs from local directories, git
+sources (including a GitHub API path that works without `git`), direct downloads and archives,
+well-known providers and Notion pages and packs, for all 79 agents; it writes a v2
+`skills-lock.json` and implements the content-hash contract. `list`, `check`, `update`, `remove`,
+`use`, `find`, `init` and restore-from-lock are delivered, and the release pipeline builds every
+supported platform. See `docs/spec/` for what is delivered.
 
 ## Prerequisites
 
 - Go 1.27 or newer. The module targets the Go 1.27 toolchain.
-- `git`, used to fetch sources and to run the repository scripts.
+- `git`, used to fetch most sources and to run the repository scripts. Public GitHub sources can
+  install without it through the API fast path; explicit refs, private repositories and other hosts
+  still clone.
 - No Node.js runtime. Installing the upstream CLI is not required or used.
 
 `task` (go-task v3) is optional; it runs the same commands documented in Development guidelines.
@@ -45,9 +49,9 @@ go build -ldflags "-X main.version=0.1.0 -X main.commit=$(git rev-parse --short 
 
 ## Usage
 
-The command surface is planned to match upstream v1.9.0, minus the npm library API and the
-`node_modules`/workspace sync. Options, output and exit codes are not final until `docs/spec/`
-describes them; commands marked `TODO` exit with a usage error.
+The command surface matches upstream v1.9.0, minus the npm library API and the
+`node_modules`/workspace sync. Options, output and exit codes are documented in `docs/spec/`; the
+excluded `experimental_sync`/`sync` commands exit 2 with an explanation.
 
 Current, working subset:
 
@@ -56,6 +60,9 @@ Current, working subset:
 ./skills add vercel-labs/agent-skills --list
 ./skills add vercel-labs/agent-skills@v1.2.3 --skill web-design -a opencode -y
 ./skills add https://gitlab.com/group/repo -a claude-code -y
+./skills add https://example.com/skills/design.zip -a opencode -y
+./skills add https://example.com/.well-known/agent-skills/index.json -a opencode -y
+./skills add notion -a opencode -y            # every pack; add interactively to pick
 
 # Interactive: choose skills, agents, scope and install method with the keyboard.
 ./skills add vercel-labs/agent-skills
@@ -105,7 +112,7 @@ single skill, and `--full-depth` searches the whole tree to five levels.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
-| `add` | Install skills for any of the 79 agents from a local path or git source, interactively or non-interactively, with `--json` output. | Partial (git sources) |
+| `add` | Install skills for any of the 79 agents from a local path, git source, GitHub API fast path, direct download or archive, well-known provider, or Notion page or pack; interactively or non-interactively, with `--json` output. | Delivered |
 | `list` | List installed skills and compare them with the lock file. | Delivered |
 | `remove` | Remove installed skills and their lock entries, keeping anything another agent still uses. | Delivered |
 | `update` | Re-resolve tracked skills to newer revisions, preserving mode, rename and Eve placement. | Delivered |
@@ -126,8 +133,8 @@ There is no telemetry and there will not be any.
 
 Data compatibility: `skills-lock.json` (v2, with v1 migration), the global
 `$XDG_STATE_HOME/skills/.skill-lock.json` (v3) and the content hash algorithm keep validating
-existing upstream lock files. Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub API limits when the
-global lock records folder tree hashes; `SKILLS_API_URL` overrides the search endpoint;
+existing upstream lock files. Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub API limits for the
+blob fast path and for folder tree hashes; `SKILLS_API_URL` overrides the search endpoint;
 `--frozen-lockfile` is implied by the usual CI variables (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`,
 `BUILDKITE`, `CIRCLECI`, `TRAVIS`, `TF_BUILD`, `JENKINS_URL`). Where upstream documentation and upstream code disagree,
 the documented behavior wins.
@@ -184,8 +191,6 @@ the targets CI and release builds must cover.
         ├── merge-gate.yml     Pull-request checks: docs gate, tests, lint, cross-compile
         └── release.yml        Tag-driven release published by GoReleaser
 ```
-
-Directories listed with `(TODO)` in the usage table do not exist yet; everything else is present.
 
 ## Development guidelines
 

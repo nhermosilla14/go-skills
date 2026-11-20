@@ -8,10 +8,11 @@ Command surface, argument parsing, prompts, output streams, JSON documents and e
 `skills` dispatches `add` (`a`, `install`, `i` with a source), `list` (`ls`), `check`,
 `update` (`upgrade`), `remove` (`rm`, `r`), `use`, `find` (`f`, `s`, `search`), `init`,
 `install`/`i` without a source, `experimental_install` (alias of restore), `help` and `version`.
-Unknown commands and flags exit 2 naming the argument.
-- Criteria: every documented alias resolves; each command's own `--help` works (including `use`);
-  `--version` prints version, commit and build date.
-- Tests: TestParseCommands, TestParseCommands, TestParseUse, TestParseInit, TestParseFind, TestHelpListsAgentsAndOnlyWorkingFlags
+Unknown commands and flags exit 2 naming the argument. `experimental_sync` and `sync` are recognized
+only to report that they are unsupported.
+- Criteria: every documented alias resolves; each command's own `--help` works (including `use`
+  and `init`); `--version` prints version, commit and build date.
+- Tests: TestParseCommands, TestParseUseOptions, TestParseInit, TestParseFind, TestHelpListsAgentsAndOnlyWorkingFlags, TestE2EExperimentalSyncStub
 
 ### Argument parsing
 Repeatable list options are greedy in the space form and take one value in `--flag=value`; `--`
@@ -23,12 +24,13 @@ one positional source is rejected.
 
 ### Interactive flow
 When stdin is a terminal and no `-y`/`--json`, `add` asks, in order: skills, Eve confirmation,
-Eve subagents, agents, scope, method, confirmation. Each flag that supplies an answer removes its
+Eve subagents, agents, scope, method, confirmation. A bare `notion` source adds a pack picker before
+skill selection, starting with every pack checked. Each flag that supplies an answer removes its
 prompt. The selector shows grouped skills with descriptions and a detail pane; agents show a locked
 universal section; Eve subagents show root plus one entry per subdirectory.
 - Criteria: the matrix holds; cancel at any step installs nothing and prints `Installation
   cancelled`; TTY cancel exits 0, non-TTY exits 1; `NO_COLOR` and `TERM=dumb` disable the TUI.
-- Tests: TestPlanStepsMatchesThePromptMatrix, TestFlowCancelAtEveryStep, TestGoldenViews, TestSessionCancelReturnsErrCancelled, TestE2EEveSubagentPrompt
+- Tests: TestPlanStepsMatchesThePromptMatrix, TestFlowCancelAtEveryStep, TestGoldenViews, TestSessionCancelReturnsErrCancelled, TestE2EEveSubagentPrompt, TestNotionPackSelectionPrompt, TestPacksPromptListsEveryPackByName, TestPacksPromptReturnsCheckedPacks, TestPacksPromptCancel
 
 ### Host-agent detection
 Environment markers identify the agent running the tool (Claude, Codex, OpenCode, Gemini CLI,
@@ -38,7 +40,7 @@ universal set unless `-a` is given, prints one informational line, and allows `-
 `remove` and `find` also run non-interactively. Unmapped hosts fall back to ordinary detection.
 - Criteria: one test per marker row; a bare `CURSOR_TRACE_ID` does not trigger host mode; `--agent`
   always wins.
-- Tests: TestDetectHostMarkers, TestDetectHostCursorDemoted, TestDetectHostUnmappedFallsBack, TestAddHostTargets, TestE2EHostAgentDetection
+- Tests: TestDetectHostTableRowPerMarker, TestDetectHostCursorDemotion, TestDetectHostUnmappedHostFallsBack, TestAddHostModeTargetsTheHostAgent, TestE2EHostAgentDetection
 
 ### Streams
 stdout carries only product output: the `--json` document, `list` output, the `use` prompt, `find`
@@ -63,14 +65,32 @@ with no other stdout. With `--agent` it launches the agent with the prompt as on
 inherits stdio and propagates its exit code.
 - Criteria: prompt bytes match the golden; ambiguity and conflicts exit 1; `--skill` twice and `*`
   agents are rejected; a missing command reports `Could not launch`.
-- Tests: TestUsePromptGolden, TestUseSelection, TestLaunchAgent, TestE2EUsePrompt, TestE2EUseSelection, TestE2EUseAgentLaunch
+- Tests: TestBuildUsePromptGolden, TestSelectUseSkill, TestLaunchAgentPassesPromptAndStreams, TestE2EUsePrompt, TestE2EUseSelection, TestE2EUseAgentLaunch
 
 ### init
 `init [name]` writes the documented `SKILL.md` template (YAML-escaped name) to `./SKILL.md` or
 `./<name>/SKILL.md`, refuses to overwrite (message, exit 0) and rejects names that escape the working
 directory, absolute paths and extra positionals (exit 2).
 - Criteria: template matches the golden; traversal rejected; generated file parses.
-- Tests: TestInitTemplate, TestInitUnsafeNames, TestWriteInit, TestE2EInit
+- Tests: TestInitTemplateGolden, TestInitRejectsUnsafeNames, TestWriteInit, TestE2EInit
+
+### init help
+`skills init --help` prints a command-specific block on stdout, like `use`: the template target
+(`./SKILL.md` or `./<name>/SKILL.md`), the overwrite rule, the traversal rejection and the exit codes.
+It does not print the top-level help.
+- Criteria: the block names the command and covers template, target, overwrite and traversal; stderr
+  is empty and the exit code is 0.
+- Tests: TestInitHelpNamesTheCommand, TestParseInitHelp, TestRunInitHelp, TestE2EInitHelp
+
+### Unsupported command stubs
+`experimental_sync` and its `sync` alias exist only as stubs for the excluded npm/`node_modules`
+integration. They exit 2 with a message naming the feature, saying that integration is excluded, and
+pointing at `skills add` for git or local sources; `--help` does not revive them. The top-level help
+lists them under an explicit not-supported note, and no other command's behaviour or unknown-command
+handling changes.
+- Criteria: both spellings exit 2 with the explanation and the `add` pointer; help marks them as
+  unsupported; unknown commands keep their existing error.
+- Tests: TestParseUsageErrors, TestHelpListsAgentsAndOnlyWorkingFlags, TestE2EExperimentalSyncStub, TestE2EExperimentalSyncHelpStaysAStub
 
 ### find
 `find [query...] [--owner]` searches the skills.sh endpoint (`SKILLS_API_URL` override), with the
@@ -78,14 +98,14 @@ documented partial-match fan-out, install-command rendering and badges. No query
 interactive search; without a TTY it prints the tip. Network/API failures exit 1.
 - Criteria: owner validation, exactly encoded query, fan-out caps, no-results message, interactive
   cancel.
-- Tests: TestSearchExact, TestSearchFanout, TestFindRendering, TestRunSearch, TestE2EFindKeyword, TestE2EFindAPIFailure
+- Tests: TestSearchExact, TestSearchPartialFanOut, TestWriteFindResults, TestRunSearchNeedsAFunction, TestRunSearchCancel, TestE2EFindKeyword, TestE2EFindAPIFailure
 
 ### One-time find-skills offer
 After a successful interactive install, when `dismissed.findSkillsPrompt` is not set, the tool offers
 to install `find-skills` globally; declining prints the manual command and either answer records the
 dismissal. It never runs non-interactively.
 - Criteria: asked once; dismissal persisted atomically; failures do not fail the original install.
-- Tests: TestOfferDismissal, TestE2EFindSkillsOfferOnce
+- Tests: TestFindSkillsOfferDeclinedRecordsDismissal, TestE2EFindSkillsOfferOnce
 
 ### Exit codes
 0 success; 1 failure, partial failure, no match, or a skipped entry in `--json`; 2 usage error,
@@ -95,6 +115,7 @@ unsupported scope or unknown option.
 
 ## Not supported
 
-- `experimental_sync` and the `package.json` `skills` field (later branch).
+- `experimental_sync`/`sync` and the `package.json` `skills` field: explicit exit-2 stubs, no npm or
+  `node_modules` integration.
 - Telemetry, security-audit output and `--metadata`.
 - Banner/logo output: the tool prints no decorative banner at all.
